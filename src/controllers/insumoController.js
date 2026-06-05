@@ -1,24 +1,17 @@
 /**
  * insumoController.js
  * Controlador completo del módulo de Inventario.
+ *
+ * CAMBIO PRINCIPAL: los endpoints de tipo de muestra
+ * siguen existiendo pero ahora se usan desde el formulario
+ * de insumo (no desde la receta). La query de recetas ya
+ * no incluye tipos_muestra en su resultado.
  */
 
 const insumoModule  = require('../modules/insumoModule');
 const pool          = require('../config/db');
 const { getConfig } = require('./configuracionController');
 const { registrarAuditoria } = require('../helpers/auditoria');
-
-// Helper: obtiene id_usuario_rol desde el header o lo resuelve desde la BD
-const getIdUsuarioRol = async (req) => {
-  if (req.user?.id_usuario_rol) return req.user.id_usuario_rol;
-  // Si el frontend no envió el header, buscamos el primer rol activo del usuario
-  const { rows } = await pool.query(
-    `SELECT id_usuario_rol FROM usuario_rol WHERE id_usuario = $1 AND activo = TRUE LIMIT 1`,
-    [req.user.id]
-  );
-  return rows[0]?.id_usuario_rol || null;
-};
-
 const insumoController = {
 
   // ════════════════════════════════════════════════════════
@@ -116,6 +109,8 @@ const insumoController = {
 
   // ════════════════════════════════════════════════════════
   // RECETAS (Examen ↔ Insumo)
+  // Ya NO incluye tipos_muestra en la respuesta.
+  // El tipo de muestra se ve en la tabla de Insumos.
   // ════════════════════════════════════════════════════════
 
   getRecetas: async (req, res) => {
@@ -142,6 +137,8 @@ const insumoController = {
 
   // ════════════════════════════════════════════════════════
   // TIPOS DE MUESTRA
+  // Siguen siendo un catálogo global que se usa en el
+  // formulario de Insumo (no en Recetas).
   // ════════════════════════════════════════════════════════
 
   getTiposMuestra: async (req, res) => {
@@ -165,13 +162,11 @@ const insumoController = {
       );
       if (rows.length === 0)
         return res.status(409).json({ error: "Ya existe un tipo con ese nombre" });
-
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
-        pool,
+        pool,           // ← o client si estás dentro de un BEGIN/COMMIT
         req.user.id,
-        idUsuarioRol,
-        'CREAR_TIPO_MUESTRA',
+        req.user.id_usuario_rol,
+        'SE CREO_TIPO_MUESTRA',
         `Tipo de muestra creado: "${nombre.trim()}"`
       );
       res.status(201).json(rows[0]);
@@ -180,6 +175,7 @@ const insumoController = {
 
   eliminarTipoMuestra: async (req, res) => {
     try {
+      // No eliminar si está en uso por algún insumo activo
       const { rowCount: enUsoInsumo } = await pool.query(
         `SELECT 1 FROM insumos WHERE id_tipo_muestra = $1 AND estado = TRUE LIMIT 1`,
         [req.params.id]
@@ -187,28 +183,23 @@ const insumoController = {
       if (enUsoInsumo > 0)
         return res.status(409).json({ error: "No se puede eliminar: hay insumos activos con este tipo" });
 
-      // Obtener el nombre antes de borrar (para la auditoría)
-      const { rows: tipoRows } = await pool.query(
-        `SELECT nombre FROM tipo_muestra WHERE id_tipo_muestra = $1`, [req.params.id]
-      );
-      const nombreTipo = tipoRows[0]?.nombre || `ID ${req.params.id}`;
-
       await pool.query(`DELETE FROM tipo_muestra WHERE id_tipo_muestra = $1`, [req.params.id]);
 
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
         pool,
         req.user.id,
-        idUsuarioRol,
-        'ELIMINAR_TIPO_MUESTRA',
-        `Tipo de muestra eliminado: "${nombreTipo}"`
+        req.user.id_usuario_rol,
+        'SE ELIMINÓ_TIPO_MUESTRA',
+        `Tipo de muestra eliminado ID: ${req.params.id}`
       );
+
       res.json({ msg: "Tipo de muestra eliminado" });
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
   // ════════════════════════════════════════════════════════
   // ASIGNAR / QUITAR TIPO DE MUESTRA A EXAMEN (pivote)
+  // Estos endpoints siguen disponibles para uso manual/futuro.
   // ════════════════════════════════════════════════════════
 
   asignarTipoExamen: async (req, res) => {
@@ -221,13 +212,12 @@ const insumoController = {
          VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [id_examen, id_tipo_muestra]
       );
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
-        pool,
+        pool,           // ← o client si estás dentro de un BEGIN/COMMIT
         req.user.id,
-        idUsuarioRol,
-        'ASIGNAR_TIPO_MUESTRA_EXAMEN',
-        `Tipo de muestra ID ${id_tipo_muestra} asignado al examen ID ${id_examen}`
+        req.user.id_usuario_rol,
+        'SE ASIGNÓ_TIPO_MUESTRA',
+        ` Se asignó el tipo de muestra ID ${id_tipo_muestra} al examen ID ${id_examen}`
       );
       res.json({ msg: "Tipo de muestra asignado" });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -240,15 +230,14 @@ const insumoController = {
         `DELETE FROM examen_tipo_muestra WHERE id_examen = $1 AND id_tipo_muestra = $2`,
         [id_examen, id_tipo]
       );
-      const idUsuarioRol = await getIdUsuarioRol(req);
-      await registrarAuditoria(
-        pool,
-        req.user.id,
-        idUsuarioRol,
-        'QUITAR_TIPO_MUESTRA_EXAMEN',
-        `Tipo de muestra ID ${id_tipo} quitado del examen ID ${id_examen}`
-      );
       res.json({ msg: "Tipo de muestra quitado" });
+      await registrarAuditoria(
+        pool,           // ← o client si estás dentro de un BEGIN/COMMIT
+        req.user.id,
+        req.user.id_usuario_rol,
+        'SE ELIMINÓ_TIPO_MUESTRA',
+        `Tipo de muestra Examen eliminado: examen ID ${id_examen}, tipo ID ${id_tipo}`
+      );
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
@@ -256,15 +245,15 @@ const insumoController = {
     const { id_examen, id_insumo, cantidad_usada } = req.body;
     if (!id_examen || !id_insumo || !cantidad_usada)
       return res.status(400).json({ error: "id_examen, id_insumo y cantidad_usada son obligatorios" });
+
     try {
       const receta = await insumoModule.configurarReceta(id_examen, id_insumo, cantidad_usada, req.user.id);
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
         pool,
         req.user.id,
-        idUsuarioRol,
-        'VINCULAR_EXAMEN_INSUMO',
-        `Examen ID ${id_examen} vinculado con Insumo ID ${id_insumo} (cantidad: ${cantidad_usada})`
+        req.user.id_usuario_rol,
+        'SE VINCULÓ_EXAMEN',
+        `Examen ID ${id_examen} vinculado con insumo ID ${id_insumo}, cantidad: ${cantidad_usada}`
       );
       res.json(receta);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -276,14 +265,12 @@ const insumoController = {
         'DELETE FROM examen_insumo WHERE id_examen_insumo = $1', [req.params.id]
       );
       if (rowCount === 0) return res.status(404).json({ error: "Vinculación no encontrada" });
-
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
-        pool,
+        pool,           // ← o client si estás dentro de un BEGIN/COMMIT
         req.user.id,
-        idUsuarioRol,
-        'ELIMINAR_RECETA',
-        `Vinculación examen-insumo ID ${req.params.id} eliminada`
+        req.user.id_usuario_rol,
+        'SE ELIMINÓ_VINCULACIÓN',
+        `Vinculación eliminada: Examen ID ${req.params.id_examen}, Insumo ID ${req.params.id_insumo}`
       );
       res.json({ msg: "Vinculación eliminada correctamente" });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -299,35 +286,17 @@ const insumoController = {
 
       const cfg = await getConfig();
       if (cfg.notificarAlertasStock && req.body.id_insumo) {
-
-        // Resolver alertas PENDIENTES de insumos que ya tienen stock suficiente
-        await pool.query(`
-          UPDATE reabastecimiento r
-          SET estado = 'RESUELTA'
-          FROM insumos i
-          WHERE r.id_insumo = i.id_insumo
-            AND r.estado = 'PENDIENTE'
-            AND i.stock_actual > i.stock_minimo
-        `);
-
-        // Consultar estado actual del insumo afectado
         const { rows } = await pool.query(
           'SELECT nombre, stock_actual, stock_minimo, unidad_medida FROM insumos WHERE id_insumo = $1',
           [req.body.id_insumo]
         );
         const ins = rows[0];
-
         if (ins && ins.stock_actual <= ins.stock_minimo) {
-          // Notificar a administradores (usando la tabla pivote usuario_rol)
-          const admins = await pool.query(`
-            SELECT DISTINCT u.id_usuario
-            FROM usuario u
-            JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario
-            JOIN rol r ON r.id_rol = ur.id_rol
-            WHERE LOWER(r.nombre) = 'administrador'
-              AND ur.activo = TRUE
-              AND u.estado = TRUE
-          `);
+          const admins = await pool.query(
+            `SELECT u.id_usuario FROM usuario u
+             JOIN rol r ON u.id_rol = r.id_rol
+             WHERE LOWER(r.nombre) = 'administrador' AND u.estado = TRUE`
+          );
           for (const adm of admins.rows) {
             await pool.query(
               `INSERT INTO notificacion (id_usuario, mensaje) VALUES ($1, $2)`,
@@ -335,8 +304,6 @@ const insumoController = {
                `⚠️ Stock bajo: "${ins.nombre}" — quedan ${ins.stock_actual} ${ins.unidad_medida} (mínimo: ${ins.stock_minimo})`]
             );
           }
-
-          // Crear alerta de reabastecimiento solo si no hay una PENDIENTE ya
           const yaExiste = await pool.query(
             `SELECT 1 FROM reabastecimiento WHERE id_insumo = $1 AND estado = 'PENDIENTE' LIMIT 1`,
             [req.body.id_insumo]
@@ -351,13 +318,12 @@ const insumoController = {
         }
       }
 
-      const idUsuarioRol = await getIdUsuarioRol(req);
       await registrarAuditoria(
         pool,
         req.user.id,
-        idUsuarioRol,
-        'MOVIMIENTO_STOCK_MANUAL',
-        `${req.body.tipo_movimiento}: ${req.body.cantidad} unidades — Insumo ID ${req.body.id_insumo}. ${req.body.observacion || ''}`
+        req.user.id_usuario_rol,
+        'SE REGISTRÓ_MOVIMIENTO',
+        `Movimiento manual registrado para insumo ID: ${req.body.id_insumo}, tipo: ${req.body.tipo_movimiento}`
       );
 
       res.json(resultado);

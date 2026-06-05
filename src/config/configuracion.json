@@ -1,0 +1,7 @@
+{
+  "expiracionQR": 48,
+  "bloqueoEdicion": true,
+  "auditoriaEstricta": true,
+  "notificarAlertasStock": true,
+  "reintentosLogin": 3
+}

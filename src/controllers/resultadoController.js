@@ -1,7 +1,9 @@
 const resultadoModule    = require('../modules/resultadoModule');
 const notificacionModule = require('../modules/notificacionModule');
 const pool               = require('../config/db');
+const supabase           = require('../config/supabaseStorage');
 const { registrarAuditoria } = require('../helpers/auditoria');
+
 
 // Helper: obtiene id_usuario_rol desde el header o lo resuelve desde la BD
 const getIdUsuarioRol = async (req, executor = pool) => {
@@ -331,14 +333,22 @@ const resultadoController = {
                     u.correo  AS paciente_correo,
                     p.genero,
                     EXTRACT(YEAR FROM AGE(p.fecha_nacimiento))::int AS edad_paciente,
-                    uv.nombres || ' ' || uv.apellidos AS admin_nombre,
-                    adm.cargo         AS admin_cargo,
-                    adm.firma_digital AS admin_firma
+                    -- Nombre del admin: validador si existe, sino el logueado actual
+                    COALESCE(uv.nombres || ' ' || uv.apellidos,
+                             ua.nombres || ' ' || ua.apellidos)       AS admin_nombre,
+                    -- Cargo: validador si existe, sino el logueado actual
+                    COALESCE(adm_v.cargo,       adm_a.cargo)          AS admin_cargo,
+                    -- Firma: SIEMPRE usar la del admin logueado actual primero
+                    COALESCE(adm_a.firma_digital, adm_v.firma_digital) AS admin_firma
                 FROM orden_medica om
                 JOIN paciente p ON om.id_paciente = p.id_paciente
                 JOIN usuario u  ON p.id_usuario   = u.id_usuario
-                LEFT JOIN usuario uv        ON uv.id_usuario  = COALESCE(om.id_validador, $2)
-                LEFT JOIN administrador adm ON adm.id_usuario = COALESCE(om.id_validador, $2)
+                -- Validador que firmó la orden (puede ser null si aún no se validó)
+                LEFT JOIN usuario uv          ON uv.id_usuario    = om.id_validador
+                LEFT JOIN administrador adm_v ON adm_v.id_usuario = om.id_validador
+                -- Admin actualmente logueado (siempre disponible)
+                LEFT JOIN usuario ua          ON ua.id_usuario    = $2
+                LEFT JOIN administrador adm_a ON adm_a.id_usuario = $2
                 WHERE om.id_orden = $1
             `, [id_orden, req.user.id]);
 
@@ -420,7 +430,22 @@ const resultadoController = {
                 ORDER BY r.fecha_resultado ASC
             `, [id_orden, edad_paciente ?? null, sexoPaciente]);
 
-            res.json({ ...ordenRes.rows[0], resultados: resultadosRes.rows });
+            // Generar URL firmada de Supabase para la firma del admin
+            const ordenData = { ...ordenRes.rows[0] };
+            if (ordenData.admin_firma) {
+                try {
+                    const { data: signedData, error: signedError } = await supabase.storage
+                        .from('firmas')
+                        .createSignedUrl(ordenData.admin_firma, 3600);
+                    if (!signedError && signedData?.signedUrl) {
+                        ordenData.admin_firma_url = signedData.signedUrl;
+                    }
+                } catch (_) {
+                    // Si falla la URL firmada, admin_firma_url quedará undefined — el PDF omite la firma
+                }
+            }
+
+            res.json({ ...ordenData, resultados: resultadosRes.rows });
         } catch (e) {
             console.error("Error en detalleOrdenAdmin:", e.message);
             res.status(500).json({ error: e.message });
@@ -585,6 +610,71 @@ const resultadoController = {
         } finally { client.release(); }
     },
 
+    ordenesDelPaciente: async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT om.id_orden, om.numero_ticket, om.fecha_orden, om.estado
+            FROM orden_medica om
+            JOIN paciente p ON om.id_paciente = p.id_paciente
+            WHERE p.id_usuario = $1
+              AND om.estado = 'Validado'
+            ORDER BY om.fecha_orden DESC
+        `, [req.user.id]);
+        res.json({ data: rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+},
+
+detalleOrdenPaciente: async (req, res) => {
+    try {
+        const { id_orden } = req.params;
+
+        // Verificar que la orden pertenece al paciente
+        const check = await pool.query(`
+            SELECT om.id_orden FROM orden_medica om
+            JOIN paciente p ON om.id_paciente = p.id_paciente
+            WHERE om.id_orden = $1 AND p.id_usuario = $2 AND om.estado = 'Validado'
+        `, [id_orden, req.user.id]);
+
+        if (check.rowCount === 0)
+            return res.status(403).json({ error: 'No autorizado.' });
+
+        // Traer todos los resultados validados de esa orden con sus parámetros
+        // ✅ DESPUÉS — agrega JOIN a categoria_examen y trae nombre_categoria
+const { rows } = await pool.query(`
+    SELECT
+        r.id_resultado,
+        r.archivo_pdf,
+        e.nombre_examen,
+        e.tipo_resultado,
+        ce.nombre_categoria,
+        pe.nombre_parametro,
+        pe.unidad,
+        pe.rango_min,
+        pe.rango_max,
+        pe.valor_referencia,
+        dr.valor_obtenido  AS resultado,
+        dr.observacion
+    FROM resultado r
+    JOIN detalle_orden do2      ON do2.id_orden       = r.id_orden
+    JOIN examen e               ON e.id_examen        = do2.id_examen
+    LEFT JOIN categoria_examen ce ON ce.id_categoria  = e.id_categoria
+    LEFT JOIN especialista_examen ee ON ee.id_especialista = r.id_especialista
+                                   AND ee.id_examen        = e.id_examen
+    LEFT JOIN parametro_examen pe ON pe.id_examen = e.id_examen AND pe.estado = TRUE
+    LEFT JOIN detalle_resultado dr ON dr.id_resultado = r.id_resultado
+                                  AND dr.id_parametro = pe.id_parametro
+    WHERE r.id_orden = $1
+      AND (r.estado = 'Validado' OR r.archivo_pdf IS NOT NULL)
+    ORDER BY ce.nombre_categoria, e.nombre_examen, pe.id_parametro
+`, [id_orden]);
+
+        res.json({ data: rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+},
     devolverParametro: async (req, res) => {
         const { id_detalle } = req.params;
         const { motivo } = req.body;

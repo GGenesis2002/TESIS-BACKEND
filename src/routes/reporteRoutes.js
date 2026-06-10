@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const reporteController = require('../controllers/reporteController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 /**
  * @route   GET /api/reportes/descargar/:id_orden

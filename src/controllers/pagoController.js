@@ -1,6 +1,7 @@
 const pagoModule = require('../modules/pagoModule');
 const pool = require('../config/db');
-const { registrarAuditoria } = require('../helpers/auditoria'); // ← NUEVO
+const { registrarAuditoria } = require('../helpers/auditoria');
+const notificacionModule = require('../modules/notificacionModule');
 
 const pagoController = {
 
@@ -33,6 +34,33 @@ const pagoController = {
                 monto: parseFloat(monto),
                 metodo_pago
             });
+
+            // Notificar al paciente que su pago fue confirmado
+            try {
+                const pacRes = await pool.query(
+                    `SELECT p.id_usuario FROM orden_medica o
+                     JOIN paciente p ON o.id_paciente = p.id_paciente
+                     WHERE o.id_orden = $1`,
+                    [parseInt(id_orden)]
+                );
+                if (pacRes.rowCount > 0) {
+                    const id_usuario_paciente = pacRes.rows[0].id_usuario;
+                    const rolPac = await pool.query(
+                        `SELECT ur.id_usuario_rol FROM usuario_rol ur
+                         JOIN rol r ON ur.id_rol = r.id_rol
+                         WHERE ur.id_usuario = $1 AND LOWER(r.nombre) = 'paciente' AND ur.activo = TRUE
+                         LIMIT 1`,
+                        [id_usuario_paciente]
+                    );
+                    await notificacionModule.crear(
+                        id_usuario_paciente,
+                        `✅ Tu pago de $${parseFloat(monto).toFixed(2)} para la orden #${id_orden} fue registrado correctamente. Método: ${metodo_pago}.`,
+                        rolPac.rows[0]?.id_usuario_rol || null
+                    );
+                }
+            } catch (notifErr) {
+                console.error('[PAGO] Error al enviar notificación:', notifErr.message);
+            }
 
             // Auditoría — usa pool (sin transacción)
             await registrarAuditoria(

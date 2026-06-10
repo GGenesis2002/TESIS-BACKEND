@@ -96,7 +96,21 @@ const adminController = {
             );
 
             await client.query('COMMIT');
-            res.json({ msg: "Perfil actualizado correctamente", firma: nuevaFirmaPath });
+
+            // Generar URL firmada para devolver al frontend
+            let firmaUrl = null;
+            if (nuevaFirmaPath) {
+                const { data: signedData } = await supabase.storage
+                    .from('firmas')
+                    .createSignedUrl(nuevaFirmaPath, 3600);
+                firmaUrl = signedData?.signedUrl || null;
+            }
+
+            res.json({
+                msg:      "Perfil actualizado correctamente",
+                firma:    nuevaFirmaPath,  // path (para la BD)
+                firma_url: firmaUrl,       // URL firmada (para el frontend)
+            });
 
         } catch (e) {
             await client.query('ROLLBACK');

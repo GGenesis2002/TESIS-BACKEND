@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const examenCtrl = require('../controllers/examenController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // Listados
 router.get('/', verifyToken, examenCtrl.listarActivos);

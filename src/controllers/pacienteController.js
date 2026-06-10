@@ -5,6 +5,25 @@ const { registrarAuditoria } = require('../helpers/auditoria');
 
 const pacienteController = {
 
+    // ── OBTENER PERFIL PROPIO ──────────────────────────────────────────────────
+    obtenerPerfilPropio: async (req, res) => {
+        try {
+            const id_usuario = req.user.id;
+            const { rows } = await pool.query(
+                `SELECT u.id_usuario, u.cedula, u.nombres, u.apellidos, u.correo, u.username,
+                        p.telefono, p.direccion, p.genero, p.fecha_nacimiento
+                 FROM usuario u
+                 JOIN paciente p ON p.id_usuario = u.id_usuario
+                 WHERE u.id_usuario = $1`,
+                [id_usuario]
+            );
+            if (!rows[0]) return res.status(404).json({ error: 'Perfil no encontrado.' });
+            res.json({ perfil: rows[0] });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
+
     // ── REGISTRO ──────────────────────────────────────────────────────────────
     registrarPaciente: async (req, res) => {
         const client = await pool.connect();
@@ -21,7 +40,7 @@ const pacienteController = {
                     (SELECT COUNT(*) FROM usuario  WHERE cedula   = $1)::int AS cedula_existe,
                     (SELECT COUNT(*) FROM usuario  WHERE correo   = $2)::int AS correo_existe,
                     (SELECT COUNT(*) FROM usuario  WHERE username = $3)::int AS username_existe,
-                    (SELECT COUNT(*) FROM paciente WHERE telefono = $4)::int AS telefono_existe`,
+                    (SELECT COUNT(*) FROM paciente WHERE telefono = $4 AND telefono IS NOT NULL AND telefono != '')::int AS telefono_existe`,
                 [cedula, correo, username, telefono]
             );
             const { cedula_existe, correo_existe, username_existe, telefono_existe } = dupCheck.rows[0];
@@ -48,12 +67,17 @@ const pacienteController = {
                 [id_usuario]
             );
 
-            await client.query(
-                `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [id_usuario, fecha_nacimiento, telefono, direccion, genero]
-            );
-
+           await client.query(
+            `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
+            VALUES ($1, $2, $3, $4, $5)`,
+            [
+                id_usuario,
+                fecha_nacimiento,
+                telefono   || null,
+                direccion  || null,
+                genero     || null,
+            ]
+        );
             const responsable    = req.user ? req.user.id           : id_usuario;
             const rolResponsable = req.user ? req.user.id_usuario_rol : null;
 

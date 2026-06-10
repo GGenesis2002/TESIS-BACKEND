@@ -1,13 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/pacienteController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // Rutas públicas
 router.post('/registro', controller.registrarPaciente);
 
 // Perfil propio (el paciente edita su cuenta desde el app)
-router.put('/perfil', verifyToken, controller.editarPerfilPropio);
+router.get('/perfil',  verifyToken, controller.obtenerPerfilPropio);
+router.put('/perfil',  verifyToken, controller.editarPerfilPropio);
 
 // Rutas protegidas
 router.get('/', verifyToken, controller.listarPacientes);

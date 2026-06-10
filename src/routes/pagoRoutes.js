@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pagoController = require('../controllers/pagoController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // POST /pagos/procesar — Registra el cobro de una orden
 router.post('/procesar', verifyToken, pagoController.procesarCobro);

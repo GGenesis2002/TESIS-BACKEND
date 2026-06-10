@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const validacionController = require('../controllers/validacionController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 
 /**
  * @route   POST /api/validaciones/gestionar
  * @desc    Aprobar o rechazar (mandar a corregir) resultados médicos
  * @access  Privado (Admin)
  */
-router.post('/gestionar', verifyToken, validacionController.gestionarValidacion);
+router.post('/gestionar', verifyToken, checkRole(['Administrador']), validacionController.gestionarValidacion);
 
 module.exports = router;

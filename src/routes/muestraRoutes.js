@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const muestraCtrl = require('../controllers/muestraController');
-const {verifyToken} = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // 1. Secretaria registra que ya tomó la muestra
 router.post('/recoleccion', verifyToken, muestraCtrl.confirmarRecoleccion);

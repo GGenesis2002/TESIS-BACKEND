@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/usuarioController');
-const {verifyToken} = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 
 // El usuario logueado gestiona su perfil
 router.put('/update-password', verifyToken, controller.actualizarPassword);

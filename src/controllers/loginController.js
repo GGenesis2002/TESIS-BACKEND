@@ -86,9 +86,10 @@ const login = async (req, res) => {
             token,
             user: {
                 id: user.id_usuario,
+                id_usuario_rol: idUsuarioRolPrincipal,  // ← necesario para filtrar notificaciones
                 nombres: user.nombres,
                 apellidos: user.apellidos,
-                correo: user.correo,          // ← AGREGADO
+                correo: user.correo,
                 username: user.username,
                 rol: rolPrincipal,
                 roles: user.roles,

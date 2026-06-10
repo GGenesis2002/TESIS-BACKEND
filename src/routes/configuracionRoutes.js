@@ -5,7 +5,8 @@ const router = express.Router();
 const { obtenerConfiguracion, actualizarConfiguracion } = require("../controllers/configuracionController");
 
 // 2. Importación del middleware con el nombre exacto de tu archivo (verifyToken)
-const { verifyToken } = require("../middlewares/authMiddleware");
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // 3. Definición de Endpoints del Dispensario usando tu middleware real
 router.get("/", verifyToken, obtenerConfiguracion);

@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const notificacionController = require('../controllers/notificacionController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // Obtener todas las notificaciones del usuario en sesión filtradas por rol activo
 router.get('/', verifyToken, notificacionController.listarMisNotificaciones);

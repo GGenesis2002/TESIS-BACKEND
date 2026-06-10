@@ -1,6 +1,7 @@
 const router       = require('express').Router();
 const ctrl         = require('../controllers/insumoController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // ── CATEGORÍAS DE INSUMOS (CRUD completo) ─────────────────────────────────────
 router.get   ('/categorias',         verifyToken, ctrl.getCategorias);

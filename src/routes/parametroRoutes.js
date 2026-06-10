@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const paramCtrl = require('../controllers/parametroController');
-const {verifyToken} = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 // Listar parámetros de un examen específico
 router.get('/examen/:id_examen', verifyToken, paramCtrl.listarPorExamen);

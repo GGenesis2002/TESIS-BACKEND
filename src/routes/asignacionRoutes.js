@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const asigCtrl = require('../controllers/asignacionController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 
 router.post('/', verifyToken, asigCtrl.asignar);
 router.get('/', verifyToken, asigCtrl.listar);

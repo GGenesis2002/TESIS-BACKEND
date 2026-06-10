@@ -7,53 +7,138 @@ const { registrarAuditoria } = require('../helpers/auditoria');
 
 const ordenController = {
     // 1. PACIENTE / SECRETARIA: Crea una orden
-    crearPorPaciente: async (req, res) => {
-        try {
-            const cfg = await getConfig();
-            const { id_paciente, examenes } = req.body;
+   crearPorPaciente: async (req, res) => {
+    try {
+        const cfg = await getConfig();
+        const { examenes, id_paciente: idPacienteBody } = req.body;
+        const roles = req.user.roles || [];
 
-            // ── Validaciones de entrada ──────────────────────────────────────
-            if (!id_paciente) {
+        if (!examenes || !Array.isArray(examenes) || examenes.length === 0) {
+            return res.status(400).json({ error: "Debe enviar al menos un examen." });
+        }
+        const examenesValidos = examenes.every(
+            e => e != null && typeof e === 'object' && e.id_examen != null && e.precio != null
+        );
+        if (!examenesValidos) {
+            return res.status(400).json({
+                error: "Formato de exámenes incorrecto. Cada examen debe ser { id_examen, precio }."
+            });
+        }
+
+        let id_paciente;
+
+        if (roles.includes('Paciente')) {
+            // ✅ Paciente: ignorar lo que manda el cliente, resolver desde el JWT
+            const pacRes = await pool.query(
+                'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
+                [req.user.id]
+            );
+            if (pacRes.rowCount === 0) {
+                return res.status(403).json({ error: "No se encontró el paciente asociado a este usuario." });
+            }
+            id_paciente = pacRes.rows[0].id_paciente;
+
+        } else if (roles.includes('Secretaria') || roles.includes('Admin')) {
+            // ✅ Secretaria/Admin: usa el id_paciente que manda el body (es para otro paciente)
+            if (!idPacienteBody) {
                 return res.status(400).json({ error: "El id_paciente es requerido." });
             }
-            if (!examenes || !Array.isArray(examenes) || examenes.length === 0) {
-                return res.status(400).json({ error: "Debe enviar al menos un examen." });
-            }
+            id_paciente = idPacienteBody;
+        } else {
+            return res.status(403).json({ error: "No tienes permiso para crear órdenes." });
+        }
 
-            // ✅ FIX: validar que cada elemento tenga id_examen y precio (objetos, no números planos)
+        const { tokenQR, ticket } = await ordenModule.crear(
+            id_paciente,
+            null,
+            examenes,
+            'Generada',
+            cfg.expiracionQR
+        );
+
+        const qrImg = await QRCode.toDataURL(tokenQR);
+        res.json({ ticket, qr: qrImg, msg: `QR válido por ${cfg.expiracionQR} hora(s)` });
+
+        await registrarAuditoria(
+            pool,
+            req.user.id,
+            req.user.id_usuario_rol,
+            'SE CREO_ORDEN',
+            `Orden creada para paciente ID ${id_paciente} con exámenes: ${JSON.stringify(examenes)}`
+        );
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+},
+    // 1b. PACIENTE: Edita su propia orden (solo estado 'Generada')
+    editarPorPaciente: async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { examenes } = req.body;
+
+            // Validar examenes
+            if (!examenes || !Array.isArray(examenes) || examenes.length === 0) {
+                return res.status(400).json({ error: 'Debe enviar al menos un examen.' });
+            }
             const examenesValidos = examenes.every(
                 e => e != null && typeof e === 'object' && e.id_examen != null && e.precio != null
             );
             if (!examenesValidos) {
                 return res.status(400).json({
-                    error: "Formato de exámenes incorrecto. Cada examen debe ser { id_examen, precio }."
+                    error: 'Formato de exámenes incorrecto. Cada examen debe ser { id_examen, precio }.'
                 });
             }
 
-            // ── Crear la orden ───────────────────────────────────────────────
-            const { tokenQR, ticket } = await ordenModule.crear(
-                id_paciente,
-                null,           // id_secretaria (null cuando la crea el paciente)
-                examenes,       // array de { id_examen, precio }
-                'Generada',
-                cfg.expiracionQR
+            // Verificar que la orden pertenece al paciente autenticado
+            const pacRes = await pool.query(
+                'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
+                [req.user.id]
             );
-            
-            const qrImg = await QRCode.toDataURL(tokenQR);
-            res.json({ ticket, qr: qrImg, msg: `QR válido por ${cfg.expiracionQR} hora(s)` });
+            if (pacRes.rowCount === 0) {
+                return res.status(403).json({ error: 'Paciente no encontrado.' });
+            }
+            const id_paciente = pacRes.rows[0].id_paciente;
 
-            // Auditoría
+            const ordenRes = await pool.query(
+                'SELECT estado, id_paciente FROM orden_medica WHERE id_orden = $1',
+                [id]
+            );
+            if (ordenRes.rowCount === 0) {
+                return res.status(404).json({ error: 'Orden no encontrada.' });
+            }
+
+            const orden = ordenRes.rows[0];
+
+            // Solo puede editar sus propias ordenes
+            if (orden.id_paciente !== id_paciente) {
+                return res.status(403).json({ error: 'No tienes permiso para editar esta orden.' });
+            }
+
+            // Solo si esta en estado 'Generada'
+            if (orden.estado !== 'Generada') {
+                return res.status(400).json({
+                    error: `No se puede editar la orden. Estado actual: '${orden.estado}'.`
+                });
+            }
+
+            // Usar corregir: limpia detalles y reinserta
+            const nuevoTotal = await ordenModule.corregir(id, examenes);
+
             await registrarAuditoria(
                 pool,
                 req.user.id,
                 req.user.id_usuario_rol,
-                'SE CREO_ORDEN',
-                `Orden creada para paciente ID ${id_paciente} con exámenes: ${JSON.stringify(examenes)}`
-             );
-        } catch (e) { 
-            res.status(500).json({ error: e.message }); 
+                'SE EDITO_ORDEN_PACIENTE',
+                `Paciente edito la orden ID: ${id} con examenes: ${JSON.stringify(examenes)}`
+            );
+
+            res.json({ msg: 'Orden actualizada con exito', nuevoTotal, id_orden: parseInt(id) });
+        } catch (e) {
+            console.error('Error al editar orden por paciente:', e.message);
+            res.status(500).json({ error: e.message });
         }
     },
+
 
     // 2. SECRETARIA: Busca por Ticket o Escanea QR
     buscarOrden: async (req, res) => {
@@ -313,14 +398,16 @@ const ordenController = {
                 const id_paciente = pacRes.rows[0].id_paciente;
 
                 // FIX: Agregamos JOINs para traer nombres, apellidos y CÉDULA
-                let q = `
-                    SELECT o.id_orden, o.numero_ticket, o.fecha_orden,
-                           o.estado, o.total, u.nombres, u.apellidos, u.cedula
-                    FROM orden_medica o
-                    JOIN paciente p ON o.id_paciente = p.id_paciente
-                    JOIN usuario u ON p.id_usuario = u.id_usuario
-                    WHERE o.id_paciente = $1
-                `;
+                // En listar(), dentro del bloque if (roles.includes('Paciente')):
+                    let q = `
+                        SELECT o.id_orden, o.numero_ticket, o.fecha_orden,
+                            o.estado, o.total, o.qr_codigo,          -- ← AGREGAR ESTO
+                            u.nombres, u.apellidos, u.cedula
+                        FROM orden_medica o
+                        JOIN paciente p ON o.id_paciente = p.id_paciente
+                        JOIN usuario u ON p.id_usuario = u.id_usuario
+                        WHERE o.id_paciente = $1
+                    `;
                 const params = [id_paciente];
                 if (estado) { q += ' AND o.estado = $2'; params.push(estado); }
                 q += ' ORDER BY o.fecha_orden DESC';
@@ -354,7 +441,100 @@ const ordenController = {
         } catch (e) { 
             res.status(500).json({ error: e.message }); 
         }
+    },
+
+    // 7. ADMIN/SECRETARIA: Eliminar una orden permanentemente
+    eliminar: async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            // 1. Verificar que la orden existe
+            const check = await pool.query(
+                'SELECT estado, id_paciente FROM orden_medica WHERE id_orden = $1', [id]
+            );
+            if (check.rows.length === 0) {
+                return res.status(404).json({ error: "La orden especificada no existe." });
+            }
+
+            const estadoActual = check.rows[0].estado;
+            const roles = req.user.roles || [];
+
+            // 2. Si es Paciente, solo puede eliminar sus propias órdenes
+            if (roles.includes('Paciente')) {
+                const pacRes = await pool.query(
+                    'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
+                    [req.user.id]
+                );
+                if (pacRes.rowCount === 0) {
+                    return res.status(403).json({ error: 'Paciente no encontrado.' });
+                }
+                if (check.rows[0].id_paciente !== pacRes.rows[0].id_paciente) {
+                    return res.status(403).json({ error: 'No tienes permiso para eliminar esta orden.' });
+                }
+            }
+
+            // 3. Solo se pueden eliminar órdenes Canceladas o Generadas (sin transacciones financieras)
+            const estadosPermitidos = ['Generada', 'Cancelada'];
+            if (!estadosPermitidos.includes(estadoActual)) {
+                return res.status(400).json({
+                    error: `No se puede eliminar la orden. Solo se pueden eliminar órdenes en estado 'Generada' o 'Cancelada'. Estado actual: '${estadoActual}'.`
+                });
+            }
+
+            // 3. Eliminar detalle primero (FK) y luego la orden
+            await pool.query('DELETE FROM detalle_orden WHERE id_orden = $1', [id]);
+            await pool.query('DELETE FROM orden_medica WHERE id_orden = $1', [id]);
+
+            // Auditoría
+            await registrarAuditoria(
+                pool,
+                req.user.id,
+                req.user.id_usuario_rol,
+                'SE ELIMINÓ_ORDEN',
+                `Se eliminó permanentemente la orden ID: ${id} (estado previo: ${estadoActual})`
+            );
+
+            res.json({ success: true, message: "Orden eliminada permanentemente." });
+        } catch (e) {
+            console.error("Error al eliminar orden:", e.message);
+            res.status(500).json({ error: e.message });
+        }
+    }
+};  // ← fin ordenController
+
+// ─── LIMPIEZA AUTOMÁTICA: eliminar órdenes 'Generada' con más de 5 días ──────
+// Se ejecuta una vez al iniciar el servidor y luego cada 24 horas.
+const limpiarOrdenesExpiradas = async () => {
+    try {
+        // Primero eliminar los detalles de las órdenes expiradas
+        await pool.query(`
+            DELETE FROM detalle_orden
+            WHERE id_orden IN (
+                SELECT id_orden FROM orden_medica
+                WHERE estado = 'Generada'
+                  AND fecha_orden < NOW() - INTERVAL '5 days'
+            )
+        `);
+
+        // Luego eliminar las órdenes expiradas
+        const result = await pool.query(`
+            DELETE FROM orden_medica
+            WHERE estado = 'Generada'
+              AND fecha_orden < NOW() - INTERVAL '5 days'
+            RETURNING id_orden, numero_ticket
+        `);
+
+        if (result.rowCount > 0) {
+            console.log(`[LIMPIEZA AUTOMÁTICA] Se eliminaron ${result.rowCount} orden(es) expirada(s):`,
+                result.rows.map(r => r.numero_ticket).join(', '));
+        }
+    } catch (e) {
+        console.error("[LIMPIEZA AUTOMÁTICA] Error al limpiar órdenes expiradas:", e.message);
     }
 };
+
+// Ejecutar al iniciar y luego cada 24 horas
+limpiarOrdenesExpiradas();
+setInterval(limpiarOrdenesExpiradas, 24 * 60 * 60 * 1000);
 
 module.exports = ordenController;

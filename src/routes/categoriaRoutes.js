@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const catCtrl = require('../controllers/categoriaController');
 // CORRECCIÓN: Agrega las llaves para extraer solo la función verifyToken
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
 // Listados
 router.get('/', verifyToken, catCtrl.listarActivas);
 router.get('/inactivas', verifyToken, catCtrl.listarInactivas);

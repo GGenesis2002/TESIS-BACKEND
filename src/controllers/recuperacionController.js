@@ -20,7 +20,17 @@ const recuperacionController = {
                           <p>Has solicitado recordar tu nombre de usuario para el sistema del Laboratorio.</p>
                           <p>Tu nombre de usuario es: <b>${user.username}</b></p>`;
 
-            await enviarCorreo(user.correo, "Recordatorio de Usuario", html);
+            const enviado = await enviarCorreo(
+                    user.correo,
+                    "Recordatorio de Usuario",
+                    html
+                );
+
+                if (!enviado) {
+                    return res.status(500).json({
+                        msg: "No se pudo enviar el correo"
+                    });
+                }
 
             // Auditoría — usa pool (sin transacción)
             // Nota: id_usuario_rol es null aquí porque el usuario NO está logueado todavía

@@ -38,11 +38,8 @@ const login = async (req, res) => {
             });
         }
 
-        // === 🔍 BLOQUE DE DIAGNÓSTICO (DEBUG) ===
-        console.log("--- DEBUG DE CONTRASENAS ---");
-        console.log("1. Contraseña tipeada en el Login (Frontend):", password);
-        console.log("2. String guardado en la BD (PostgreSQL):", user.password);
-        console.log("------------------------------------------");
+
+      
 
         // 3. Validar Password utilizando bcrypt
         const isMatch = await bcrypt.compare(password, user.password);

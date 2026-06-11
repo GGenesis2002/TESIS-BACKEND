@@ -1,7 +1,10 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    family: 4,
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
@@ -11,14 +14,16 @@ const transporter = nodemailer.createTransport({
 const enviarCorreo = async (to, subject, html) => {
     try {
         await transporter.sendMail({
-            from: '"Laboratorio Clínico 🔬" <tu-correo@gmail.com>',
+            from: `"Laboratorio Clínico 🔬" <${process.env.EMAIL_USER}>`,
             to,
             subject,
             html
         });
+
+        console.log('Correo enviado a:', to);
         return true;
     } catch (error) {
-        console.error("Error al enviar correo:", error);
+        console.error('Error al enviar correo:', error);
         return false;
     }
 };

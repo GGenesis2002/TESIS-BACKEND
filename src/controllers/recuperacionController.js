@@ -16,9 +16,39 @@ const recuperacionController = {
             if (rows.length === 0) return res.status(404).json({ msg: "Cuenta no encontrada" });
 
             const user = rows[0];
-            const html = `<h3>Hola, ${user.nombres}.</h3>
-                          <p>Has solicitado recordar tu nombre de usuario para el sistema del Laboratorio.</p>
-                          <p>Tu nombre de usuario es: <b>${user.username}</b></p>`;
+            const html = `
+                <div style="font-family: Arial, sans-serif; max-width:600px; margin:auto; border:1px solid #e0e0e0; padding:20px; border-radius:10px;">
+
+                <h2 style="color:#2c3e50; text-align:center;">
+                    Laboratorio Clínico Garófalo
+                </h2>
+
+                <hr>
+
+                <p>Estimado/a <b>${user.nombres}</b>,</p>
+
+                <p>
+                    Hemos recibido una solicitud para recuperar su nombre de usuario en nuestro sistema.
+                </p>
+
+                <p><b>Su nombre de usuario es:</b></p>
+
+                <div style="text-align:center; font-size:28px; font-weight:bold; color:#1a73e8; padding:10px;">
+                    ${user.username}
+                </div>
+
+                <p style="text-align:center; color:#2c3e50;">
+                    Puede iniciar sesión normalmente con este usuario.
+                </p>
+
+                <hr>
+
+                <p style="font-size:12px; color:gray;">
+                    Si usted no realizó esta solicitud, puede ignorar este mensaje o contactar al laboratorio.
+                </p>
+
+                </div>
+                `;
 
             const enviado = await enviarCorreo(
                     user.correo,
@@ -61,11 +91,43 @@ const recuperacionController = {
 
             await pool.query('UPDATE usuario SET codigo_recuperacion = $1 WHERE id_usuario = $2', [codigo, user.id_usuario]);
 
-            const html = `<h3>Código de Recuperación</h3>
-                          <p>Hola ${user.nombres}, utiliza el siguiente código para cambiar tu contraseña:</p>
-                          <h1 style="color: #2c3e50;">${codigo}</h1>
-                          <p>Este código es de un solo uso.</p>`;
+            const html = `
+                <div style="font-family: Arial, sans-serif; max-width:600px; margin:auto; border:1px solid #e0e0e0; padding:20px; border-radius:10px;">
 
+                <h2 style="color:#2c3e50; text-align:center;">
+                    Laboratorio Clínico Garófalo
+                </h2>
+
+                <hr>
+
+                <p>Estimado/a <b>${user.nombres}</b>,</p>
+
+                <p>
+                    Hemos recibido una solicitud para restablecer su contraseña en el sistema del laboratorio.
+                </p>
+
+                <p><b>Su código de verificación es:</b></p>
+
+                <div style="text-align:center; font-size:32px; letter-spacing:5px; font-weight:bold; color:#1a73e8; padding:10px;">
+                    ${codigo}
+                </div>
+
+                <p style="text-align:center; color:#e74c3c;">
+                    ⏱ Este código es válido por 10 minutos
+                </p>
+
+                <p style="text-align:center; color:#2c3e50;">
+                    Ingrese este código en la plataforma para continuar con el cambio de contraseña.
+                </p>
+
+                <hr>
+
+                <p style="font-size:12px; color:gray;">
+                    Si usted no solicitó este cambio, ignore este mensaje o contacte al laboratorio.
+                </p>
+
+                </div>
+                `;
             await enviarCorreo(correo, "Código de Seguridad", html);
 
             res.json({ msg: "Código enviado con éxito" });

@@ -1,31 +1,31 @@
-const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
-});
+const axios = require('axios');
 
 const enviarCorreo = async (to, subject, html) => {
     try {
-        await transporter.sendMail({
-            from: `"Laboratorio Clínico Garófalo" <${process.env.EMAIL_FROM}>`,
-            to,
-            subject,
-            html
+        await axios.post('https://api.brevo.com/v3/smtp/email', {
+            sender: {
+                name: "Laboratorio Clínico Garófalo",
+                email: process.env.EMAIL_FROM
+            },
+            to: [
+                {
+                    email: to
+                }
+            ],
+            subject: subject,
+            htmlContent: html
+        }, {
+            headers: {
+                'api-key': process.env.BREVO_API_KEY,
+                'Content-Type': 'application/json'
+            }
         });
 
-        console.log('Correo enviado a:', to);
+        console.log("📧 Correo enviado correctamente (Brevo API)");
         return true;
+
     } catch (error) {
-        console.error('Error SMTP:', error);
+        console.error("❌ Error enviando correo:", error.response?.data || error.message);
         return false;
     }
 };

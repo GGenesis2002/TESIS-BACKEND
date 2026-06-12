@@ -110,7 +110,7 @@ async function verificarBaseDatos() {
 app.listen(PORT, async () => {
     console.log(`=================================================`);
     console.log(`🚀 SERVIDOR CORRIENDO EN EL PUERTO: ${PORT}`);
-    console.log(`🌐 URL BASE: http://localhost:${PORT}`);
+    console.log(`🌐 URL BASE LOCAL: http://localhost:${PORT}`);
     
     // Ejecutamos la prueba de la BD al levantar el servidor
     await verificarBaseDatos(); 

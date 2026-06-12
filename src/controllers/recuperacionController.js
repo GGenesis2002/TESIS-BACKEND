@@ -113,7 +113,7 @@ const recuperacionController = {
                 </div>
 
                 <p style="text-align:center; color:#e74c3c;">
-                    ⏱ Este código es válido por 10 minutos
+                    ⏱ Este código es de un solo uso, al salir de esta página, debera pedir uno nuevo.⏱
                 </p>
 
                 <p style="text-align:center; color:#2c3e50;">

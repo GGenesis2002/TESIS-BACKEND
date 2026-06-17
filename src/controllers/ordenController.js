@@ -31,7 +31,7 @@ const ordenController = {
             // ✅ Paciente: ignorar lo que manda el cliente, resolver desde el JWT
             const pacRes = await pool.query(
                 'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
-                [req.user.id]
+                [req.user.id_usuario]
             );
             if (pacRes.rowCount === 0) {
                 return res.status(403).json({ error: "No se encontró el paciente asociado a este usuario." });
@@ -61,7 +61,7 @@ const ordenController = {
 
         await registrarAuditoria(
             pool,
-            req.user.id,
+            req.user.id_usuario,
             req.user.id_usuario_rol,
             'SE CREO_ORDEN',
             `Orden creada para paciente ID ${id_paciente} con exámenes: ${JSON.stringify(examenes)}`
@@ -92,7 +92,7 @@ const ordenController = {
             // Verificar que la orden pertenece al paciente autenticado
             const pacRes = await pool.query(
                 'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
-                [req.user.id]
+                [req.user.id_usuario]
             );
             if (pacRes.rowCount === 0) {
                 return res.status(403).json({ error: 'Paciente no encontrado.' });
@@ -126,7 +126,7 @@ const ordenController = {
 
             await registrarAuditoria(
                 pool,
-                req.user.id,
+                req.user.id_usuario,
                 req.user.id_usuario_rol,
                 'SE EDITO_ORDEN_PACIENTE',
                 `Paciente edito la orden ID: ${id} con examenes: ${JSON.stringify(examenes)}`
@@ -232,7 +232,7 @@ const ordenController = {
             //Auditoría
             await registrarAuditoria(
                 pool,
-                req.user.id,
+                req.user.id_usuario,
                 req.user.id_usuario_rol,
                 'SE REGENERO_QR',
                 `Regeneró QR para la orden ID ${id_orden} con ticket ${ticket}`
@@ -265,7 +265,7 @@ const ordenController = {
             
            await registrarAuditoria(
                 pool,           // ← o client si estás dentro de un BEGIN/COMMIT
-                req.user.id,
+                req.user.id_usuario,
                 req.user.id_usuario_rol,
                 'SE CORRIGIÓ_ORDEN',
                 'SE CORRIGIO LA ORDEN ID: ' + id_orden + ' CON LOS EXAMENES: ' + JSON.stringify(examenes)
@@ -287,13 +287,13 @@ const ordenController = {
                  id_secretaria = (SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1),
                  fecha_orden = CURRENT_TIMESTAMP
                  WHERE id_orden = $2`,
-                [req.user.id, id_orden]
+                [req.user.id_usuario, id_orden]
             );
 
         // Auditoría
             await registrarAuditoria(
             pool,           // ← o client si estás dentro de un BEGIN/COMMIT
-            req.user.id,
+            req.user.id_usuario,
             req.user.id_usuario_rol,
             'SE PAGO ORDEN',
             'SE PAGO LA ORDEN ID: ' + id_orden
@@ -365,7 +365,7 @@ const ordenController = {
             // Auditoría
            await registrarAuditoria(
             pool,           // ← o client si estás dentro de un BEGIN/COMMIT
-            req.user.id,
+            req.user.id_usuario,
             req.user.id_usuario_rol,
             'SE CANCELÓ_ORDEN',
             'SE CANCELÓ LA ORDEN ID: ' + id + ' POR EL MOTIVO: ' + motivo
@@ -392,7 +392,7 @@ const ordenController = {
             if (roles.includes('Paciente')) {
                 const pacRes = await pool.query(
                     'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
-                    [req.user.id]
+                    [req.user.id_usuario]
                 );
                 if (pacRes.rowCount === 0) return res.json([]);
                 const id_paciente = pacRes.rows[0].id_paciente;
@@ -463,7 +463,7 @@ const ordenController = {
             if (roles.includes('Paciente')) {
                 const pacRes = await pool.query(
                     'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
-                    [req.user.id]
+                    [req.user.id_usuario]
                 );
                 if (pacRes.rowCount === 0) {
                     return res.status(403).json({ error: 'Paciente no encontrado.' });
@@ -488,7 +488,7 @@ const ordenController = {
             // Auditoría
             await registrarAuditoria(
                 pool,
-                req.user.id,
+                req.user.id_usuario,
                 req.user.id_usuario_rol,
                 'SE ELIMINÓ_ORDEN',
                 `Se eliminó permanentemente la orden ID: ${id} (estado previo: ${estadoActual})`

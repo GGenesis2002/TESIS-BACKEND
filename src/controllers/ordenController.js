@@ -8,6 +8,8 @@ const { registrarAuditoria } = require('../helpers/auditoria');
 const ordenController = {
     // 1. PACIENTE / SECRETARIA: Crea una orden
    crearPorPaciente: async (req, res) => {
+        console.log('>>> ROLES EN TOKEN:', req.user.roles); // ← AGREGA ESTO
+    console.log('>>> USUARIO ID:', req.user.id);
     try {
         const cfg = await getConfig();
         const { examenes, id_paciente: idPacienteBody } = req.body;

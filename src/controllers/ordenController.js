@@ -519,15 +519,28 @@ const limpiarOrdenesExpiradas = async () => {
         // Luego eliminar las órdenes expiradas
         const result = await pool.query(`
             DELETE FROM orden_medica
-            WHERE estado = 'Generada'
+            WHERE estado = 'Generada' 
               AND fecha_orden < NOW() - INTERVAL '5 days'
             RETURNING id_orden, numero_ticket
         `);
 
+        
         if (result.rowCount > 0) {
             console.log(`[LIMPIEZA AUTOMÁTICA] Se eliminaron ${result.rowCount} orden(es) expirada(s):`,
                 result.rows.map(r => r.numero_ticket).join(', '));
+
+            // Auditoría: un registro por cada orden eliminada
+            for (const orden of result.rows) {
+                await registrarAuditoria(
+                    pool,
+                    ID_USUARIO_SISTEMA,   // ver nota abajo
+                    null,                  // no hay rol de usuario real en un proceso automático
+                    'ELIMINACION_AUTOMATICA_ORDEN',
+                    `Se eliminó automáticamente por expiración la orden ID: ${orden.id_orden} (ticket: ${orden.numero_ticket}, estado previo: Generada)`
+                );
+            }
         }
+
     } catch (e) {
         console.error("[LIMPIEZA AUTOMÁTICA] Error al limpiar órdenes expiradas:", e.message);
     }

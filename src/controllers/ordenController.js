@@ -40,7 +40,13 @@ const ordenController = {
             }
             id_paciente = pacRes.rows[0].id_paciente;
 
-        } else if (roles.includes('Secretaria') || roles.includes('Admin')) {
+        } else if (
+    roles.includes('Secretaria') ||
+    roles.includes('Administrador') ||
+    roles.includes('Técnico') ||
+    roles.includes('Especialista') ||
+    roles.includes('Asistente Analista')
+) {
             // ✅ Secretaria/Admin: usa el id_paciente que manda el body (es para otro paciente)
             if (!idPacienteBody) {
                 return res.status(400).json({ error: "El id_paciente es requerido." });

@@ -30,7 +30,7 @@ const resultadoRoutes = require('./routes/resultadoRoutes');
 // Rutas adicionales para el flujo de PDF y Validación (Asegúrate de tener estos archivos)
 const validacionRoutes = require('./routes/validacionRoutes'); 
 const reporteRoutes = require('./routes/reporteRoutes');
-
+require('./helpers/scheduledTasks'); // ← activa los cron jobs al iniciar el servidor
 const app = express();
 
 // --- 2. MIDDLEWARES GLOBALES ---

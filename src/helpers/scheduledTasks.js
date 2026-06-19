@@ -32,6 +32,8 @@ cron.schedule('0 0 * * *', async () => {
         console.error('[CRON] Error desactivando pacientes:', e.message);
     }
 });
+console.log('[CRON] ✅ JOB 1 registrado — corre a medianoche');
+
 
 // ── JOB 2: Eliminar resultados con más de 90 días ─────────────────────────
 // Corre a la 1:00 AM para no coincidir con el job anterior
@@ -66,3 +68,4 @@ cron.schedule('0 1 * * *', async () => {
         console.error('[CRON] Error limpiando resultados:', e.message);
     }
 });
+console.log('[CRON] ✅ JOB 2 registrado — corre a la 1:00 AM'); 

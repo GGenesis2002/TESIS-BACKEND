@@ -202,6 +202,7 @@ const resultadoController = {
                             'sexo_referencia',   pe.sexo_referencia,
                             'rango_min',         pe.rango_min,
                             'rango_max',         pe.rango_max,
+                            'valor_referencia',  pe.valor_referencia,
                             'descripcion_rango', pe.sexo_referencia || ' · ' || pe.edad_min || '-' || pe.edad_max || ' años',
                             'valor_obtenido',    dr.valor_obtenido,
                             'observacion',       dr.observacion,

@@ -18,8 +18,14 @@ const parametroModule = {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`;
         
         const { rows } = await pool.query(query, [
-            id_examen, nombre_parametro, unidad, 
-            rango_min, rango_max, valor_referencia, 
+            id_examen, nombre_parametro, unidad,
+            // rango_min/rango_max son NOT NULL en la tabla; para parámetros
+            // cualitativos (texto/opciones) no se usan, así que se guarda 0 como relleno.
+            rango_min === '' || rango_min === undefined || rango_min === null ? 0 : rango_min,
+            rango_max === '' || rango_max === undefined || rango_max === null ? 0 : rango_max,
+            // valor_referencia se reutiliza para guardar el tipo de dato del parámetro
+            // como JSON string, ej: {"tipo":"OPCIONES","opciones":["Positivo","Negativo"]}
+            valor_referencia || JSON.stringify({ tipo: 'NUMERICO' }),
             sexo_referencia || 'General', edad_min || 0, edad_max || 120
         ]);
         return rows[0];
@@ -74,9 +80,11 @@ const parametroModule = {
             WHERE id_parametro = $9 RETURNING *`;
 
         const { rows } = await pool.query(query, [
-            nombre_parametro, unidad, rango_min, 
-            rango_max, valor_referencia, sexo_referencia, 
-            edad_min, edad_max, id
+            nombre_parametro, unidad,
+            rango_min === '' || rango_min === undefined || rango_min === null ? 0 : rango_min,
+            rango_max === '' || rango_max === undefined || rango_max === null ? 0 : rango_max,
+            valor_referencia || JSON.stringify({ tipo: 'NUMERICO' }),
+            sexo_referencia, edad_min, edad_max, id
         ]);
         return rows[0];
     },

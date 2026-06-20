@@ -294,8 +294,11 @@ const insumoController = {
         if (ins && ins.stock_actual <= ins.stock_minimo) {
           const admins = await pool.query(
             `SELECT u.id_usuario FROM usuario u
-             JOIN rol r ON u.id_rol = r.id_rol
-             WHERE LOWER(r.nombre) = 'administrador' AND u.estado = TRUE`
+             JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario
+             JOIN rol r ON ur.id_rol = r.id_rol
+             WHERE LOWER(r.nombre) = 'administrador'
+               AND u.estado = TRUE
+               AND ur.activo = TRUE`
           );
           for (const adm of admins.rows) {
             await pool.query(
@@ -321,7 +324,7 @@ const insumoController = {
       await registrarAuditoria(
         pool,
         req.user.id,
-        req.user.id_usuario_rol,
+        req.user.id_usuario_rol || null,
         'SE REGISTRÓ_MOVIMIENTO',
         `Movimiento manual registrado para insumo ID: ${req.body.id_insumo}, tipo: ${req.body.tipo_movimiento}`
       );

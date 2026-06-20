@@ -257,20 +257,33 @@ const insumoModule = {
   // ALERTAS DE REABASTECIMIENTO
   // ════════════════════════════════════════════════════════
 
+  // NOTA: las alertas se calculan EN VIVO comparando stock_actual vs
+  // stock_minimo directo en la tabla insumos. Antes dependían de que
+  // existiera una fila en "reabastecimiento" con estado PENDIENTE, pero
+  // esa fila solo se creaba desde ajusteStockManual (movimiento manual) y
+  // solo si la config notificarAlertasStock estaba activa. Si el stock
+  // bajaba por cualquier otra vía (venta, consumo automático por receta de
+  // examen, edición de stock_minimo, etc.) nunca se generaba la alerta y
+  // la pestaña de Alertas quedaba vacía aunque el insumo estuviera en rojo.
   getAlertasReabastecimiento: async () => {
     const { rows } = await pool.query(`
       SELECT
-        r.id_reporte,
-        i.nombre        AS insumo,
+        i.id_insumo,
+        i.nombre              AS insumo,
         i.unidad_medida,
         i.stock_actual,
         i.stock_minimo,
+        (i.stock_minimo - i.stock_actual) AS deficit,
+        r.id_reporte,
         r.fecha_reporte,
-        r.estado
-      FROM reabastecimiento r
-      JOIN insumos i ON r.id_insumo = i.id_insumo
-      WHERE r.estado = 'PENDIENTE'
-      ORDER BY r.fecha_reporte DESC
+        COALESCE(r.estado, 'PENDIENTE') AS estado
+      FROM insumos i
+      LEFT JOIN reabastecimiento r
+        ON r.id_insumo = i.id_insumo
+        AND r.estado = 'PENDIENTE'
+      WHERE i.estado = TRUE
+        AND i.stock_actual <= i.stock_minimo
+      ORDER BY deficit DESC
     `);
     return rows;
   },

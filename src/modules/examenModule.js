@@ -13,7 +13,20 @@ const examenModule = {
         ]);
         return rows[0];
     },
+getByCategoria: async (idCategoria) => {
+    const query = `
+        SELECT e.*, c.nombre_categoria
+        FROM examen e
+        JOIN categoria_examen c
+            ON e.id_categoria = c.id_categoria
+        WHERE e.estado = TRUE
+          AND e.id_categoria = $1
+        ORDER BY e.nombre_examen ASC
+    `;
 
+    const { rows } = await pool.query(query, [idCategoria]);
+    return rows;
+},
     // Obtener activos con el nombre de su categoría
     getAllActive: async () => {
         const query = `

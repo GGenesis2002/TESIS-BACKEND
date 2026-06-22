@@ -2,8 +2,13 @@ const cron = require('node-cron');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('./auditoria');
 
+// Zona horaria del laboratorio. Render (y la mayoría de hosts) corren en UTC
+// por defecto, así que sin esto los jobs se ejecutaban a las 7pm/8pm hora
+// Ecuador en vez de a medianoche/1am como se pensaba.
+const TZ = 'America/Guayaquil';
+
 // ── JOB 1: Desactivar pacientes sin login en 30 días ──────────────────────
-// Corre todos los días a medianoche
+// Corre todos los días a medianoche (hora Ecuador)
 cron.schedule('0 0 * * *', async () => {
     console.log('[CRON] Revisando pacientes inactivos...');
     try {
@@ -11,6 +16,7 @@ cron.schedule('0 0 * * *', async () => {
             UPDATE usuario
             SET estado = FALSE
             WHERE estado = TRUE
+              AND ultimo_acceso IS NOT NULL
               AND ultimo_acceso < NOW() - INTERVAL '30 days'
               AND id_usuario IN (
                   SELECT ur.id_usuario FROM usuario_rol ur
@@ -28,15 +34,43 @@ cron.schedule('0 0 * * *', async () => {
             );
         }
         console.log(`[CRON] Pacientes desactivados: ${rows.length}`);
+
+        // Pacientes con ultimo_acceso = NULL nunca entran a la condición de
+        // arriba (NULL < fecha siempre es NULL, no true), así que jamás se
+        // desactivarían solos aunque lleven años sin loguearse. En vez de
+        // desactivarlos a ciegas (un paciente recién registrado también
+        // tiene ultimo_acceso NULL y sería injusto desactivarlo), los
+        // dejamos registrados en auditoría para que un admin los revise.
+        const { rows: sinAcceso } = await pool.query(`
+            SELECT u.id_usuario
+            FROM usuario u
+            JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario
+            JOIN rol r ON ur.id_rol = r.id_rol
+            WHERE u.estado = TRUE
+              AND u.ultimo_acceso IS NULL
+              AND r.nombre = 'Paciente'
+              AND ur.activo = TRUE
+        `);
+
+        if (sinAcceso.length > 0) {
+            await registrarAuditoria(
+                pool, null, null,
+                'REVISAR_PACIENTES_SIN_ACCESO',
+                `${sinAcceso.length} paciente(s) activos nunca han iniciado sesión ` +
+                `(ultimo_acceso NULL) y no se desactivaron automáticamente. IDs: ` +
+                `${sinAcceso.map(r => r.id_usuario).join(', ')}`
+            );
+            console.log(`[CRON] Pacientes sin acceso registrado (requieren revisión manual): ${sinAcceso.length}`);
+        }
     } catch (e) {
         console.error('[CRON] Error desactivando pacientes:', e.message);
     }
-});
-console.log('[CRON] ✅ JOB 1 registrado — corre a medianoche');
+}, { timezone: TZ });
+console.log(`[CRON] ✅ JOB 1 registrado — corre a medianoche (${TZ})`);
 
 
 // ── JOB 2: Eliminar resultados con más de 90 días ─────────────────────────
-// Corre a la 1:00 AM para no coincidir con el job anterior
+// Corre a la 1:00 AM (hora Ecuador) para no coincidir con el job anterior
 cron.schedule('0 1 * * *', async () => {
     console.log('[CRON] Limpiando resultados viejos...');
     try {
@@ -67,5 +101,5 @@ cron.schedule('0 1 * * *', async () => {
     } catch (e) {
         console.error('[CRON] Error limpiando resultados:', e.message);
     }
-});
-console.log('[CRON] ✅ JOB 2 registrado — corre a la 1:00 AM'); 
+}, { timezone: TZ });
+console.log(`[CRON] ✅ JOB 2 registrado — corre a la 1:00 AM (${TZ})`);

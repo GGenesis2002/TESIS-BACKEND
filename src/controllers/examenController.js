@@ -29,15 +29,26 @@ const examenController = {
         } catch (e) { res.status(500).json({ error: e.message }); }
     },
 
-    listarActivos: async (req, res) => {
-        try {
-            const { buscar } = req.query;
-            const examenes = buscar
-                ? await examenModule.searchByName(buscar)
-                : await examenModule.getAllActive();
-            res.json(examenes);
-        } catch (e) { res.status(500).json({ error: e.message }); }
-    },
+   listarActivos: async (req, res) => {
+    try {
+        const { buscar, id_categoria } = req.query;
+
+        let examenes;
+
+        if (id_categoria) {
+            examenes = await examenModule.getByCategoria(id_categoria);
+        } else if (buscar) {
+            examenes = await examenModule.searchByName(buscar);
+        } else {
+            examenes = await examenModule.getAllActive();
+        }
+
+        res.json(examenes);
+
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+},
 
     listarInactivos: async (req, res) => {
         try {

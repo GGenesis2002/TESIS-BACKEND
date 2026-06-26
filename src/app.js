@@ -72,7 +72,7 @@ app.use('/api/reportes', reporteRoutes);
 app.use('/api/insumos', insumoRoutes);
 app.use('/api/asignaciones', asignacionRoutes);
 app.use('/api/tipo-muestra', tipoMuestraRoutes);
-
+app.use('/api/usos-adicionales', require('./routes/usoAdicionalRoutes'));
 
 // Dashboard
 app.use('/api/dashboard', dashboardRoutes);

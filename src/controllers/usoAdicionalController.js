@@ -72,7 +72,7 @@ const usoAdicionalController = {
 
       // 4. Notificar a todos los administradores activos
       const { rows: admins } = await pool.query(
-        `SELECT u.id_usuario FROM usuario u
+        `SELECT u.id_usuario, ur.id_usuario_rol FROM usuario u
          JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario
          JOIN rol r ON ur.id_rol = r.id_rol
          WHERE LOWER(r.nombre) = 'administrador'
@@ -85,8 +85,8 @@ const usoAdicionalController = {
 
       for (const adm of admins) {
         await pool.query(
-          `INSERT INTO notificacion (id_usuario, mensaje) VALUES ($1, $2)`,
-          [adm.id_usuario, mensaje]
+          `INSERT INTO notificacion (id_usuario, mensaje, id_usuario_rol) VALUES ($1, $2, $3)`,
+          [adm.id_usuario, mensaje, adm.id_usuario_rol]
         );
       }
 

@@ -109,9 +109,7 @@ const reporteController = {
                 for (const [nombre, info] of Object.entries(examenes)) {
                     doc.fillColor('#eeeeee').rect(40, y, 520, 15).fill().fillColor('black');
                     doc.fontSize(9).font('Helvetica-Bold')
-                       .text(nombre.toUpperCase(), 50, y + 3)
-                       .font('Helvetica').fontSize(8)
-                       .text(`Validado por: ${info.validador}`, 400, y + 3, { align: 'right', width: 150 });
+                       .text(nombre.toUpperCase(), 50, y + 3);
                     y += 25;
 
                     doc.fontSize(8).font('Helvetica-Bold')
@@ -124,11 +122,30 @@ const reporteController = {
                     y += 10;
 
                     info.items.forEach(p => {
-                        const ref = p.rango_min ? `${p.rango_min} - ${p.rango_max}` : (p.valor_referencia || 'N/A');
+                        // Calcular referencia mostrando rango con guion, opciones, o texto libre
+                        let ref = 'N/A';
+                        if (p.rango_min !== null && p.rango_min !== undefined) {
+                            ref = `${p.rango_min} – ${p.rango_max}`;
+                        } else if (p.valor_referencia) {
+                            try {
+                                const parsed = JSON.parse(p.valor_referencia);
+                                if (parsed.tipo === 'OPCIONES' && parsed.opciones?.length) {
+                                    ref = parsed.opciones.join(' / ');
+                                } else if (parsed.tipo === 'TEXTO') {
+                                    ref = 'Texto libre';
+                                } else {
+                                    ref = p.valor_referencia;
+                                }
+                            } catch {
+                                ref = p.valor_referencia;
+                            }
+                        }
+                        // Unidad: mostrar tal cual (incluye % si aplica)
+                        const unidad = p.unidad || '';
                         doc.fontSize(8).font('Helvetica')
                            .text(p.nombre_parametro, 50, y)
-                           .font('Helvetica-Bold').text(p.valor_obtenido, 200, y)
-                           .font('Helvetica').text(p.unidad || '', 320, y)
+                           .font('Helvetica-Bold').text(p.valor_obtenido || '', 200, y)
+                           .font('Helvetica').text(unidad, 320, y)
                            .text(ref, 420, y);
                         y += 15;
                         if (y > 720) { doc.addPage(); y = 50; }

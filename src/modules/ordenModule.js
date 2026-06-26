@@ -1,18 +1,28 @@
 const pool = require('../config/db');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 
 const ordenModule = {
-    // Generar un ticket corto único (Ej: LAB-A7B2)
-    generarTicket: () => 'LAB-' + crypto.randomBytes(2).toString('hex').toUpperCase(),
+    // Generar ticket secuencial único (Ej: LAB-1, LAB-2, LAB-3...)
+    // Se consulta el último número usado en la BD para evitar duplicados
+    generarTicket: async (client) => {
+        const res = await client.query(`
+            SELECT numero_ticket FROM orden_medica
+            WHERE numero_ticket ~ '^LAB-[0-9]+$'
+            ORDER BY CAST(SUBSTRING(numero_ticket FROM 5) AS INTEGER) DESC
+            LIMIT 1
+        `);
+        if (res.rowCount === 0) return 'LAB-1';
+        const ultimo = parseInt(res.rows[0].numero_ticket.replace('LAB-', ''), 10);
+        return `LAB-${ultimo + 1}`;
+    },
 
     // Crear Orden (Paciente o Secretaria)
-    // ✅ FIX: se agrega `expiracionQR` como parámetro explícito (antes era variable inexistente en scope)
     crear: async (id_paciente, id_secretaria, examenes, estadoInicial = 'Pendiente', expiracionQR = 2) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            const ticket = ordenModule.generarTicket();
+            // El ticket se genera dentro de la transacción para evitar condiciones de carrera
+            const ticket = await ordenModule.generarTicket(client);
 
             const res = await client.query(
                 `INSERT INTO orden_medica (id_paciente, id_secretaria, estado, numero_ticket) 

@@ -2,7 +2,7 @@ const pool = require('../config/db');
 const jwt = require('jsonwebtoken');
 
 const ordenModule = {
-    // Generar ticket secuencial único (Ej: LAB-1, LAB-2, LAB-3...)
+    // Generar ticket secuencial único (Ej: LAB-0001, LAB-0002, LAB-0003...)
     // Se consulta el último número usado en la BD para evitar duplicados
     generarTicket: async (client) => {
         const res = await client.query(`
@@ -11,9 +11,12 @@ const ordenModule = {
             ORDER BY CAST(SUBSTRING(numero_ticket FROM 5) AS INTEGER) DESC
             LIMIT 1
         `);
-        if (res.rowCount === 0) return 'LAB-1';
-        const ultimo = parseInt(res.rows[0].numero_ticket.replace('LAB-', ''), 10);
-        return `LAB-${ultimo + 1}`;
+        const ultimo = res.rowCount === 0
+            ? 0
+            : parseInt(res.rows[0].numero_ticket.replace('LAB-', ''), 10);
+        const siguiente = ultimo + 1;
+        // Padding a 4 dígitos: 1 -> "0001". Si supera 9999, se expande sin recortar (ej: "10000")
+        return `LAB-${String(siguiente).padStart(4, '0')}`;
     },
 
     // Crear Orden (Paciente o Secretaria)

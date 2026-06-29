@@ -280,12 +280,12 @@ getOrdenesPorUsuario: async (req, res) => {
                 uu.username                                          AS username,
                 r.nombre                                             AS rol
             FROM orden_medica o
-            LEFT JOIN paciente p     ON o.id_paciente  = p.id_paciente
-            LEFT JOIN usuario  up    ON p.id_usuario   = up.id_usuario
-            -- ⚠️ Asegúrate de que este campo se llame así en tu BD:
-            LEFT JOIN usuario  uu    ON o.id_usuario_creador = uu.id_usuario 
-            LEFT JOIN usuario_rol ur ON uu.id_usuario = ur.id_usuario AND ur.activo = TRUE
-            LEFT JOIN rol r          ON ur.id_rol     = r.id_rol
+            LEFT JOIN paciente          p   ON o.id_paciente   = p.id_paciente
+            LEFT JOIN usuario           up  ON p.id_usuario    = up.id_usuario
+            LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
+            LEFT JOIN usuario           uu  ON aa.id_usuario   = uu.id_usuario
+            LEFT JOIN usuario_rol       ur  ON uu.id_usuario   = ur.id_usuario AND ur.activo = TRUE
+            LEFT JOIN rol               r   ON ur.id_rol       = r.id_rol
             WHERE o.fecha_orden::date = $1
             ORDER BY uu.nombres ASC, o.fecha_orden DESC
         `, [hoy]);
@@ -330,9 +330,10 @@ getIngresosPorUsuario: async (req, res) => {
                 COUNT(o.id_orden)::int                  AS total_ordenes,
                 COALESCE(SUM(o.total), 0)::numeric      AS total_generado
             FROM orden_medica o
-            LEFT JOIN usuario     u  ON o.id_usuario_creador = u.id_usuario
-            LEFT JOIN usuario_rol ur ON u.id_usuario = ur.id_usuario AND ur.activo = TRUE
-            LEFT JOIN rol r          ON ur.id_rol    = r.id_rol
+            LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
+            LEFT JOIN usuario            u  ON aa.id_usuario   = u.id_usuario
+            LEFT JOIN usuario_rol        ur ON u.id_usuario    = ur.id_usuario AND ur.activo = TRUE
+            LEFT JOIN rol                r  ON ur.id_rol       = r.id_rol
             WHERE o.fecha_orden::date = $1
             GROUP BY u.id_usuario, u.nombres, u.apellidos, r.nombre
             ORDER BY total_generado DESC

@@ -92,22 +92,24 @@ const dashboardController = {
     },
 
 
-    // Añadir esto dentro del objeto dashboardController
+    // Renombrado conceptualmente a "Ingresos" (ya no es solo "hoy"): acepta ?desde=&hasta=
 getArqueoCajaHoy: async (req, res) => {
     try {
+        const hoyISO = new Date().toISOString().split('T')[0];
+        const desde  = req.query.desde || hoyISO;
+        const hasta  = req.query.hasta || hoyISO;
+
         const query = `
             SELECT 
                 COALESCE(SUM(monto) FILTER (WHERE metodo_pago = 'Efectivo'), 0) as efectivo,
                 COALESCE(SUM(monto) FILTER (WHERE metodo_pago = 'Transferencia'), 0) as transferencia,
                 0 as tarjeta
             FROM pago
-            WHERE fecha_pago::date = CURRENT_DATE;
+            WHERE fecha_pago::date BETWEEN $1 AND $2;
         `;
-        
-        // Ejecutamos la consulta
-        const result = await pool.query(query);
-        
-        // Enviamos el resultado al frontend
+
+        const result = await pool.query(query, [desde, hasta]);
+
         res.json(result.rows[0]);
     } catch (e) {
         console.error("Error en getArqueoCajaHoy:", e);
@@ -278,14 +280,21 @@ getOrdenesPorUsuario: async (req, res) => {
                 CONCAT(up.nombres, ' ', up.apellidos)                AS paciente,
                 CONCAT(uu.nombres, ' ', uu.apellidos)                AS nombre_usuario,
                 uu.username                                          AS username,
-                r.nombre                                             AS rol
+                ur1.rol                                              AS rol
             FROM orden_medica o
             LEFT JOIN paciente          p   ON o.id_paciente   = p.id_paciente
             LEFT JOIN usuario           up  ON p.id_usuario    = up.id_usuario
             LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario           uu  ON aa.id_usuario   = uu.id_usuario
-            LEFT JOIN usuario_rol       ur  ON uu.id_usuario   = ur.id_usuario AND ur.activo = TRUE
-            LEFT JOIN rol               r   ON ur.id_rol       = r.id_rol
+            LEFT JOIN LATERAL (
+                SELECT r.nombre AS rol
+                FROM usuario_rol ur
+                JOIN rol r ON ur.id_rol = r.id_rol
+                WHERE ur.id_usuario = uu.id_usuario
+                  AND ur.activo = TRUE
+                ORDER BY ur.id_usuario_rol DESC
+                LIMIT 1
+            ) ur1 ON TRUE
             WHERE o.fecha_orden::date = $1
             ORDER BY uu.nombres ASC, o.fecha_orden DESC
         `, [hoy]);
@@ -318,26 +327,36 @@ getOrdenesPorUsuario: async (req, res) => {
     }
 },
 
-// GET /dashboard/ingresos-por-usuario
+// GET /dashboard/ingresos-por-usuario?desde=&hasta=
 getIngresosPorUsuario: async (req, res) => {
     try {
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoyISO = new Date().toISOString().split('T')[0];
+        const desde  = req.query.desde || hoyISO;
+        const hasta  = req.query.hasta || hoyISO;
 
         const result = await pool.query(`
             SELECT
+                u.id_usuario,
                 CONCAT(u.nombres, ' ', u.apellidos)    AS usuario,
-                r.nombre                                AS rol,
+                ur1.rol                                  AS rol,
                 COUNT(o.id_orden)::int                  AS total_ordenes,
                 COALESCE(SUM(o.total), 0)::numeric      AS total_generado
             FROM orden_medica o
             LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            u  ON aa.id_usuario   = u.id_usuario
-            LEFT JOIN usuario_rol        ur ON u.id_usuario    = ur.id_usuario AND ur.activo = TRUE
-            LEFT JOIN rol                r  ON ur.id_rol       = r.id_rol
-            WHERE o.fecha_orden::date = $1
-            GROUP BY u.id_usuario, u.nombres, u.apellidos, r.nombre
+            LEFT JOIN LATERAL (
+                SELECT r.nombre AS rol
+                FROM usuario_rol ur
+                JOIN rol r ON ur.id_rol = r.id_rol
+                WHERE ur.id_usuario = u.id_usuario
+                  AND ur.activo = TRUE
+                ORDER BY ur.id_usuario_rol DESC
+                LIMIT 1
+            ) ur1 ON TRUE
+            WHERE o.fecha_orden::date BETWEEN $1 AND $2
+            GROUP BY u.id_usuario, u.nombres, u.apellidos, ur1.rol
             ORDER BY total_generado DESC
-        `, [hoy]);
+        `, [desde, hasta]);
 
         // Mapeo limpio para asegurar tipos de datos correctos en el JSON de respuesta
         const rowsCorregidas = result.rows.map(row => ({

@@ -54,17 +54,6 @@ router.get('/ordenes-por-usuario', verifyToken, dashboardController.getOrdenesPo
  */
 router.get('/ingresos-por-usuario', verifyToken, dashboardController.getIngresosPorUsuario);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /usuarios/activos-hoy
-// Lista de usuarios que han iniciado sesión hoy (para el modal de usuarios)
-// ─────────────────────────────────────────────────────────────────────────────
-/**
- * @route   GET /api/dashboard/ingresos-por-usuario
- * @desc    Devuelve el total acumulado y cantidad de órdenes generadas hoy por usuario
- */
-router.get('/usuarios/activos-hoy', verifyToken, dashboardController.getUsuariosActivosHoy);
-
-
 
 // ─── AUDITORÍA Y ALERTAS ─────────────────────────────────────────────────────
 

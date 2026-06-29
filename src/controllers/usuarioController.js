@@ -63,7 +63,8 @@ const usuarioController = {
             
             res.json({ msg: "Estado actualizado", nuevoEstado: result.estado });
         } catch (e) { res.status(500).json({ error: e.message }); }
-    }
+    },
+    
 };
 
 module.exports = usuarioController;

@@ -258,43 +258,38 @@ getArqueoCajaHoy: async (req, res) => {
         }
     },
 
-    // ─── NUEVOS ENDPOINTS PARA DRILL-DOWN DEL DASHBOARD ─────────────────────────
-// Agregar estas funciones dentro del objeto dashboardController
-// en dashboardController.js, junto a las existentes.
-
+  
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /dashboard/ordenes-por-usuario
 // Devuelve las órdenes de hoy agrupadas por el usuario que las creó
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /dashboard/ordenes-por-usuario
 getOrdenesPorUsuario: async (req, res) => {
     try {
         const hoy = new Date().toISOString().split('T')[0];
 
-        // Obtener todas las órdenes de hoy con el usuario creador y datos del paciente
         const result = await pool.query(`
             SELECT
                 o.id_orden,
                 o.numero_ticket,
                 o.estado,
                 o.fecha_orden,
-                COALESCE(o.total, 0)                              AS total,
-                CONCAT(up.nombres, ' ', up.apellidos)             AS paciente,
-                CONCAT(uu.nombres, ' ', uu.apellidos)             AS nombre_usuario,
-                uu.username                                        AS username,
-                r.nombre                                           AS rol
+                COALESCE(o.total, 0)                                 AS total,
+                CONCAT(up.nombres, ' ', up.apellidos)                AS paciente,
+                CONCAT(uu.nombres, ' ', uu.apellidos)                AS nombre_usuario,
+                uu.username                                          AS username,
+                r.nombre                                             AS rol
             FROM orden_medica o
-            -- Paciente
-            LEFT JOIN paciente p    ON o.id_paciente  = p.id_paciente
-            LEFT JOIN usuario  up   ON p.id_usuario   = up.id_usuario
-            -- Usuario que creó la orden (campo id_usuario_creador en orden_medica)
-            LEFT JOIN usuario  uu   ON o.id_usuario_creador = uu.id_usuario
+            LEFT JOIN paciente p     ON o.id_paciente  = p.id_paciente
+            LEFT JOIN usuario  up    ON p.id_usuario   = up.id_usuario
+            -- ⚠️ Asegúrate de que este campo se llame así en tu BD:
+            LEFT JOIN usuario  uu    ON o.id_usuario_creador = uu.id_usuario 
             LEFT JOIN usuario_rol ur ON uu.id_usuario = ur.id_usuario AND ur.activo = TRUE
             LEFT JOIN rol r          ON ur.id_rol     = r.id_rol
             WHERE o.fecha_orden::date = $1
-            ORDER BY uu.nombres, o.fecha_orden DESC
+            ORDER BY uu.nombres ASC, o.fecha_orden DESC
         `, [hoy]);
 
-        // Agrupar en JS por usuario
         const mapa = {};
         for (const row of result.rows) {
             const key = row.username || 'sin_usuario';
@@ -311,22 +306,19 @@ getOrdenesPorUsuario: async (req, res) => {
                 numero_ticket: row.numero_ticket,
                 estado:        row.estado,
                 fecha_orden:   row.fecha_orden,
-                total:         row.total,
-                paciente:      row.paciente?.trim() || '—',
+                total:         parseFloat(row.total),
+                paciente:      row.paciente ? row.paciente.trim() : '—',
             });
         }
 
         res.json(Object.values(mapa));
     } catch (e) {
-        console.error('Error en getOrdenesPorUsuario:', e);
-        res.status(500).json({ error: e.message });
+        console.error('Error crítico en getOrdenesPorUsuario:', e.message);
+        res.status(500).json({ error: "Fallo interno al procesar órdenes por usuario." });
     }
 },
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /dashboard/ingresos-por-usuario
-// Devuelve el total de ingresos generados hoy por cada asistente/usuario
-// ─────────────────────────────────────────────────────────────────────────────
 getIngresosPorUsuario: async (req, res) => {
     try {
         const hoy = new Date().toISOString().split('T')[0];
@@ -336,20 +328,26 @@ getIngresosPorUsuario: async (req, res) => {
                 CONCAT(u.nombres, ' ', u.apellidos)    AS usuario,
                 r.nombre                                AS rol,
                 COUNT(o.id_orden)::int                  AS total_ordenes,
-                COALESCE(SUM(o.total), 0)               AS total_generado
+                COALESCE(SUM(o.total), 0)::numeric      AS total_generado
             FROM orden_medica o
             LEFT JOIN usuario     u  ON o.id_usuario_creador = u.id_usuario
             LEFT JOIN usuario_rol ur ON u.id_usuario = ur.id_usuario AND ur.activo = TRUE
-            LEFT JOIN rol         r  ON ur.id_rol    = r.id_rol
+            LEFT JOIN rol r          ON ur.id_rol    = r.id_rol
             WHERE o.fecha_orden::date = $1
             GROUP BY u.id_usuario, u.nombres, u.apellidos, r.nombre
             ORDER BY total_generado DESC
         `, [hoy]);
 
-        res.json(result.rows);
+        // Mapeo limpio para asegurar tipos de datos correctos en el JSON de respuesta
+        const rowsCorregidas = result.rows.map(row => ({
+            ...row,
+            total_generado: parseFloat(row.total_generado)
+        }));
+
+        res.json(rowsCorregidas);
     } catch (e) {
-        console.error('Error en getIngresosPorUsuario:', e);
-        res.status(500).json({ error: e.message });
+        console.error('Error crítico en getIngresosPorUsuario:', e.message);
+        res.status(500).json({ error: "Fallo interno al calcular ingresos por usuario." });
     }
 },
 

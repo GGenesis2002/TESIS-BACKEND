@@ -71,4 +71,21 @@ router.get('/alertas', verifyToken, (req, res) => {
     res.redirect(307, '/api/notificaciones');
 });
 
+
+// ─── MODALES DE DRILL-DOWN ────────────────────────────────────────────────────
+
+/**
+ * @route   GET /api/dashboard/resultados-criticos
+ * @desc    Lista de resultados con valores fuera del rango de referencia
+ */
+router.get('/resultados-criticos', verifyToken, dashboardController.getResultadosCriticos);
+
+/**
+ * @route   GET /api/dashboard/usuarios-activos-hoy
+ * @desc    Lista de usuarios que iniciaron sesión hoy
+ */
+router.get('/usuarios-activos-hoy', verifyToken, dashboardController.getUsuariosActivosHoy);
+
+module.exports = router;
+
 module.exports = router;

@@ -545,7 +545,7 @@ const limpiarOrdenesExpiradas = async () => {
             for (const orden of result.rows) {
                 await registrarAuditoria(
                     pool,
-                    ID_USUARIO_SISTEMA,   // ver nota abajo
+                    null,                  // proceso automático del sistema, no hay usuario real
                     null,                  // no hay rol de usuario real en un proceso automático
                     'ELIMINACION_AUTOMATICA_ORDEN',
                     `Se eliminó automáticamente por expiración la orden ID: ${orden.id_orden} (ticket: ${orden.numero_ticket}, estado previo: Generada)`

@@ -52,8 +52,30 @@ const dashboardController = {
             const pacientesRecientes = await pool.query(
                 `SELECT u.nombres, u.apellidos, p.id_paciente
                  FROM usuario u JOIN paciente p ON u.id_usuario = p.id_usuario
-                 ORDER BY p.id_paciente DESC LIMIT 5`
+                 ORDER BY p.id_paciente DESC LIMIT 50`
             );
+
+            // Lista completa de órdenes de hoy (para el detalle clickeable del KPI)
+            const ordenesHoyRes = await pool.query(
+                `SELECT
+                    o.id_orden,
+                    o.numero_ticket,
+                    o.estado,
+                    o.fecha_orden,
+                    COALESCE(o.total, 0)::numeric                AS total,
+                    CONCAT(u.nombres, ' ', u.apellidos)           AS paciente
+                 FROM orden_medica o
+                 LEFT JOIN paciente p ON o.id_paciente = p.id_paciente
+                 LEFT JOIN usuario  u ON p.id_usuario  = u.id_usuario
+                 WHERE o.fecha_orden::date = $1
+                 ORDER BY o.fecha_orden DESC`,
+                [hoy]
+            );
+            const ordenesHoy = ordenesHoyRes.rows.map(o => ({
+                ...o,
+                total: parseFloat(o.total),
+                paciente: o.paciente ? o.paciente.trim() : '—',
+            }));
 
             const queryGrafico = `
                 SELECT estado AS name, COUNT(*)::int AS cantidad 
@@ -79,6 +101,7 @@ const dashboardController = {
             res.json({ 
                 kpis: stats.rows[0], 
                 pacientesRecientes: pacientesRecientes.rows,
+                ordenesHoy,
                 grafico: graficoData.rows,
                 alertas: {
                     urgentes:             parseInt(al.ordenes_sin_pagar    || 0),

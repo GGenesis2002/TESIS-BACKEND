@@ -34,6 +34,7 @@ const reporteController = {
                    p.genero, EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) as edad,
                    adm.firma_digital, adm.cargo,
                    val_u.nombres as admin_nom, val_u.apellidos as admin_ape,
+                   ce.id_categoria, ce.nombre_categoria,
                    e.nombre_examen, pe.nombre_parametro, dr.valor_obtenido, 
                    pe.unidad, pe.rango_min, pe.rango_max, pe.valor_referencia
             FROM orden_medica o
@@ -43,12 +44,13 @@ const reporteController = {
             JOIN detalle_resultado dr ON r.id_resultado = dr.id_resultado
             JOIN parametro_examen pe ON dr.id_parametro = pe.id_parametro
             JOIN examen e ON pe.id_examen = e.id_examen
+            JOIN categoria_examen ce ON e.id_categoria = ce.id_categoria
             LEFT JOIN administrador adm ON o.id_validador = adm.id_usuario
             LEFT JOIN usuario val_u ON adm.id_usuario = val_u.id_usuario
             WHERE o.id_orden = $1 
             AND (pe.sexo_referencia = p.genero OR pe.sexo_referencia = 'General')
             AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max)
-            ORDER BY e.nombre_examen;
+            ORDER BY ce.nombre_categoria, e.nombre_examen;
         `;
 
         const result = await pool.query(query, [id_orden]);
@@ -94,60 +96,83 @@ const reporteController = {
 
                 let y = 190;
 
-                // Tabla de resultados agrupada por examen
-                const examenes = {};
+                // Tabla de resultados agrupada por CATEGORÍA → EXAMEN → PARÁMETROS
+                const categorias = {};
                 result.rows.forEach(r => {
-                    if (!examenes[r.nombre_examen]) {
-                        examenes[r.nombre_examen] = { items: [] };
+                    const catNombre = r.nombre_categoria || 'OTROS';
+                    if (!categorias[catNombre]) {
+                        categorias[catNombre] = { examenes: {} };
                     }
-                    examenes[r.nombre_examen].items.push(r);
+                    if (!categorias[catNombre].examenes[r.nombre_examen]) {
+                        categorias[catNombre].examenes[r.nombre_examen] = { items: [] };
+                    }
+                    categorias[catNombre].examenes[r.nombre_examen].items.push(r);
                 });
 
-                for (const [nombre, info] of Object.entries(examenes)) {
-                    doc.fillColor('#eeeeee').rect(40, y, 520, 15).fill().fillColor('black');
-                    doc.fontSize(9).font('Helvetica-Bold')
-                       .text(nombre.toUpperCase(), 50, y + 3);
-                    y += 25;
+                // Helper para no cortar un bloque a la mitad de la página
+                const checkPageBreak = (minSpace) => {
+                    if (y + minSpace > 760) { doc.addPage(); y = 50; }
+                };
 
-                    doc.fontSize(8).font('Helvetica-Bold')
-                       .text('PARÁMETRO', 50, y)
-                       .text('RESULTADO', 200, y)
-                       .text('UNIDADES', 320, y)
-                       .text('RANGO REFERENCIA', 420, y);
-                    y += 12;
-                    doc.moveTo(40, y).lineTo(560, y).lineWidth(0.5).stroke();
-                    y += 10;
+                for (const [catNombre, catInfo] of Object.entries(categorias)) {
+                    checkPageBreak(45);
 
-                    info.items.forEach(p => {
-                        // Calcular referencia mostrando rango con guion, opciones, o texto libre
-                        let ref = 'N/A';
-                        if (p.rango_min !== null && p.rango_min !== undefined) {
-                            ref = `${p.rango_min} - ${p.rango_max}`;
-                        } else if (p.valor_referencia) {
-                            try {
-                                const parsed = JSON.parse(p.valor_referencia);
-                                if (parsed.tipo === 'OPCIONES' && parsed.opciones?.length) {
-                                    ref = parsed.opciones.join(' / ');
-                                } else if (parsed.tipo === 'TEXTO') {
-                                    ref = 'Texto libre';
-                                } else {
+                    // Encabezado de CATEGORÍA (banda más oscura, jerarquía superior)
+                    doc.fillColor('#cccccc').rect(40, y, 520, 18).fill().fillColor('black');
+                    doc.fontSize(10).font('Helvetica-Bold')
+                       .text(catNombre.toUpperCase(), 50, y + 4);
+                    y += 28;
+
+                    for (const [nombreExamen, info] of Object.entries(catInfo.examenes)) {
+                        checkPageBreak(40);
+
+                        // Subtítulo de EXAMEN (banda más clara, jerarquía inferior)
+                        doc.fillColor('#eeeeee').rect(40, y, 520, 15).fill().fillColor('black');
+                        doc.fontSize(9).font('Helvetica-Bold')
+                           .text(nombreExamen.toUpperCase(), 55, y + 3);
+                        y += 25;
+
+                        doc.fontSize(8).font('Helvetica-Bold')
+                           .text('PARÁMETRO', 50, y)
+                           .text('RESULTADO', 200, y)
+                           .text('UNIDADES', 320, y)
+                           .text('RANGO REFERENCIA', 420, y);
+                        y += 12;
+                        doc.moveTo(40, y).lineTo(560, y).lineWidth(0.5).stroke();
+                        y += 10;
+
+                        info.items.forEach(p => {
+                            // Calcular referencia mostrando rango con guion, opciones, o texto libre
+                            let ref = 'N/A';
+                            if (p.rango_min !== null && p.rango_min !== undefined) {
+                                ref = `${p.rango_min} - ${p.rango_max}`;
+                            } else if (p.valor_referencia) {
+                                try {
+                                    const parsed = JSON.parse(p.valor_referencia);
+                                    if (parsed.tipo === 'OPCIONES' && parsed.opciones?.length) {
+                                        ref = parsed.opciones.join(' / ');
+                                    } else if (parsed.tipo === 'TEXTO') {
+                                        ref = 'Texto libre';
+                                    } else {
+                                        ref = p.valor_referencia;
+                                    }
+                                } catch {
                                     ref = p.valor_referencia;
                                 }
-                            } catch {
-                                ref = p.valor_referencia;
                             }
-                        }
-                        // Unidad: mostrar tal cual (incluye % si aplica)
-                        const unidad = p.unidad || '';
-                        doc.fontSize(8).font('Helvetica')
-                           .text(p.nombre_parametro, 50, y)
-                           .font('Helvetica-Bold').text(p.valor_obtenido || '', 200, y)
-                           .font('Helvetica').text(unidad, 320, y)
-                           .text(ref, 420, y);
-                        y += 15;
-                        if (y > 720) { doc.addPage(); y = 50; }
-                    });
-                    y += 15;
+                            // Unidad: mostrar tal cual (incluye % si aplica)
+                            const unidad = p.unidad || '';
+                            doc.fontSize(8).font('Helvetica')
+                               .text(p.nombre_parametro, 50, y)
+                               .font('Helvetica-Bold').text(p.valor_obtenido || '', 200, y)
+                               .font('Helvetica').text(unidad, 320, y)
+                               .text(ref, 420, y);
+                            y += 15;
+                            if (y > 720) { doc.addPage(); y = 50; }
+                        });
+                        y += 12;
+                    }
+                    y += 8;
                 }
 
                 // Firma digital — descargar desde Supabase Storage si existe

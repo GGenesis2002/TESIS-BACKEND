@@ -409,8 +409,10 @@ const ordenController = {
                 // En listar(), dentro del bloque if (roles.includes('Paciente')):
                     let q = `
                         SELECT o.id_orden, o.numero_ticket, o.fecha_orden,
-                            o.estado, o.total, o.qr_codigo,          -- ← AGREGAR ESTO
-                            u.nombres, u.apellidos, u.cedula
+                            o.estado, o.total, o.qr_codigo,
+                            u.nombres, u.apellidos, u.cedula,
+                            CONCAT(u.nombres, ' ', u.apellidos) AS paciente,
+                            (SELECT COUNT(*) FROM detalle_orden do2 WHERE do2.id_orden = o.id_orden) AS total_examenes
                         FROM orden_medica o
                         JOIN paciente p ON o.id_paciente = p.id_paciente
                         JOIN usuario u ON p.id_usuario = u.id_usuario
@@ -430,7 +432,9 @@ const ordenController = {
             // para asegurar que siempre viaje la CÉDULA al frontend.
             let qGeneral = `
                 SELECT o.id_orden, o.numero_ticket, o.fecha_orden, o.estado, o.total, o.id_paciente,
-                       u.nombres, u.apellidos, u.cedula
+                       u.nombres, u.apellidos, u.cedula,
+                       CONCAT(u.nombres, ' ', u.apellidos) AS paciente,
+                       (SELECT COUNT(*) FROM detalle_orden do2 WHERE do2.id_orden = o.id_orden) AS total_examenes
                 FROM orden_medica o
                 JOIN paciente p ON o.id_paciente = p.id_paciente
                 JOIN usuario u ON p.id_usuario = u.id_usuario

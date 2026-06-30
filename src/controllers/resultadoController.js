@@ -374,6 +374,7 @@ const resultadoController = {
                         SELECT JSON_AGG(JSON_BUILD_OBJECT(
                             'id_examen',     e.id_examen,
                             'nombre_examen', e.nombre_examen,
+                            'categoria',     ce.nombre_categoria,
                             'tipo_resultado', e.tipo_resultado,
                             'archivo_pdf',   CASE WHEN e.tipo_resultado = 'PDF' THEN r.archivo_pdf ELSE NULL END,
                             'parametros', (
@@ -419,6 +420,7 @@ const resultadoController = {
                         ))
                         FROM detalle_orden do2
                         JOIN examen e ON e.id_examen = do2.id_examen
+                        JOIN categoria_examen ce ON ce.id_categoria = e.id_categoria
                         JOIN especialista_examen ee ON ee.id_examen        = e.id_examen
                                                    AND ee.id_especialista  = r.id_especialista
                                                    AND ee.estado           = TRUE

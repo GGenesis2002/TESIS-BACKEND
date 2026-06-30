@@ -44,7 +44,7 @@ const dashboardController = {
                 SELECT
                     (SELECT COUNT(*) FROM paciente)                                                                  AS pac_reg_hoy,
                     (SELECT COUNT(*) FROM orden_medica WHERE fecha_orden::date = $1)                                 AS ord_cre_hoy,
-                    (SELECT COUNT(*) FROM orden_medica WHERE estado IN ('Generada','En Proceso'))                    AS resultados_pen,
+                    (SELECT COUNT(*) FROM orden_medica WHERE estado IN ('Generada','Pagada','En Proceso','Por Validar')) AS resultados_pen,
                     (SELECT COUNT(*) FROM orden_medica WHERE estado = 'Validado')                                    AS listos_entrega
             `;
             const stats = await pool.query(queryKpis, [hoy]);
@@ -77,6 +77,53 @@ const dashboardController = {
                 paciente: o.paciente ? o.paciente.trim() : '—',
             }));
 
+            // Lista COMPLETA de órdenes en proceso (sin restringir a "hoy"), para el
+            // modal "En Proceso" y su filtro de búsqueda por fecha
+            const ordenesProcesoRes = await pool.query(
+                `SELECT
+                    o.id_orden,
+                    o.numero_ticket,
+                    o.estado,
+                    o.fecha_orden,
+                    COALESCE(o.total, 0)::numeric                AS total,
+                    CONCAT(u.nombres, ' ', u.apellidos)           AS paciente
+                 FROM orden_medica o
+                 LEFT JOIN paciente p ON o.id_paciente = p.id_paciente
+                 LEFT JOIN usuario  u ON p.id_usuario  = u.id_usuario
+                 WHERE o.estado IN ('Generada','Pagada','En Proceso','Por Validar')
+                 ORDER BY o.fecha_orden DESC
+                 LIMIT 500`
+            );
+            const ordenesProceso = ordenesProcesoRes.rows.map(o => ({
+                ...o,
+                total: parseFloat(o.total),
+                paciente: o.paciente ? o.paciente.trim() : '—',
+            }));
+
+            // Lista COMPLETA de órdenes validadas (sin restringir a "hoy"), para el
+            // modal "Listos para Entrega" y su filtro de búsqueda por fecha
+            const ordenesValidadasRes = await pool.query(
+                `SELECT
+                    o.id_orden,
+                    o.numero_ticket,
+                    o.estado,
+                    o.fecha_orden,
+                    o.fecha_validacion,
+                    COALESCE(o.total, 0)::numeric                AS total,
+                    CONCAT(u.nombres, ' ', u.apellidos)           AS paciente
+                 FROM orden_medica o
+                 LEFT JOIN paciente p ON o.id_paciente = p.id_paciente
+                 LEFT JOIN usuario  u ON p.id_usuario  = u.id_usuario
+                 WHERE o.estado = 'Validado'
+                 ORDER BY COALESCE(o.fecha_validacion, o.fecha_orden) DESC
+                 LIMIT 500`
+            );
+            const ordenesValidadas = ordenesValidadasRes.rows.map(o => ({
+                ...o,
+                total: parseFloat(o.total),
+                paciente: o.paciente ? o.paciente.trim() : '—',
+            }));
+
             const queryGrafico = `
                 SELECT estado AS name, COUNT(*)::int AS cantidad 
                 FROM orden_medica 
@@ -102,6 +149,8 @@ const dashboardController = {
                 kpis: stats.rows[0], 
                 pacientesRecientes: pacientesRecientes.rows,
                 ordenesHoy,
+                ordenesProceso,
+                ordenesValidadas,
                 grafico: graficoData.rows,
                 alertas: {
                     urgentes:             parseInt(al.ordenes_sin_pagar    || 0),

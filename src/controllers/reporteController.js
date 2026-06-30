@@ -35,8 +35,7 @@ const reporteController = {
                    adm.firma_digital, adm.cargo,
                    val_u.nombres as admin_nom, val_u.apellidos as admin_ape,
                    e.nombre_examen, pe.nombre_parametro, dr.valor_obtenido, 
-                   pe.unidad, pe.rango_min, pe.rango_max, pe.valor_referencia,
-                   esp_u.username as validador_examen
+                   pe.unidad, pe.rango_min, pe.rango_max, pe.valor_referencia
             FROM orden_medica o
             JOIN paciente p ON o.id_paciente = p.id_paciente
             JOIN usuario u ON p.id_usuario = u.id_usuario
@@ -44,8 +43,6 @@ const reporteController = {
             JOIN detalle_resultado dr ON r.id_resultado = dr.id_resultado
             JOIN parametro_examen pe ON dr.id_parametro = pe.id_parametro
             JOIN examen e ON pe.id_examen = e.id_examen
-            LEFT JOIN especialista esp ON r.id_especialista = esp.id_especialista
-            LEFT JOIN usuario esp_u ON esp.id_usuario = esp_u.id_usuario
             LEFT JOIN administrador adm ON o.id_validador = adm.id_usuario
             LEFT JOIN usuario val_u ON adm.id_usuario = val_u.id_usuario
             WHERE o.id_orden = $1 
@@ -101,7 +98,7 @@ const reporteController = {
                 const examenes = {};
                 result.rows.forEach(r => {
                     if (!examenes[r.nombre_examen]) {
-                        examenes[r.nombre_examen] = { validador: r.validador_examen, items: [] };
+                        examenes[r.nombre_examen] = { items: [] };
                     }
                     examenes[r.nombre_examen].items.push(r);
                 });
@@ -125,7 +122,7 @@ const reporteController = {
                         // Calcular referencia mostrando rango con guion, opciones, o texto libre
                         let ref = 'N/A';
                         if (p.rango_min !== null && p.rango_min !== undefined) {
-                            ref = `${p.rango_min} – ${p.rango_max}`;
+                            ref = `${p.rango_min} - ${p.rango_max}`;
                         } else if (p.valor_referencia) {
                             try {
                                 const parsed = JSON.parse(p.valor_referencia);

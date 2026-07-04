@@ -31,6 +31,7 @@ const resultadoRoutes = require('./routes/resultadoRoutes');
 // Rutas adicionales para el flujo de PDF y Validación (Asegúrate de tener estos archivos)
 const validacionRoutes = require('./routes/validacionRoutes'); 
 const reporteRoutes = require('./routes/reporteRoutes');
+const documentoRoutes = require("./routes/documento.routes");
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use('/api/ordenes', ordenRoutes);
 app.use('/api/pagos', pagoRoutes);
 app.use('/api/validaciones', validacionRoutes);
 app.use('/api/reportes', reporteRoutes);
+app.use("/documento", documentoRoutes);
 
 // Inventario y Logística
 app.use('/api/insumos', insumoRoutes);

@@ -68,7 +68,7 @@ app.use('/api/ordenes', ordenRoutes);
 app.use('/api/pagos', pagoRoutes);
 app.use('/api/validaciones', validacionRoutes);
 app.use('/api/reportes', reporteRoutes);
-app.use("/documento", documentoRoutes);
+app.use("/api/documento", documentoRoutes);
 
 // Inventario y Logística
 app.use('/api/insumos', insumoRoutes);

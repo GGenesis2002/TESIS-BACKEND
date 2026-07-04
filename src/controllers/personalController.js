@@ -11,7 +11,7 @@ registrarPersonal: async (req, res) => {
         const {
             id_rol, id_roles, cedula, nombres, apellidos,
             correo, username, password,
-            cargo, especialidad, turno,
+            cargo, especialidad, turno, examenes_asignados,
         } = req.body;
 
         await client.query('BEGIN');
@@ -85,6 +85,28 @@ registrarPersonal: async (req, res) => {
                      ON CONFLICT (id_usuario) DO UPDATE SET turno = EXCLUDED.turno`,
                     [id_usuario, turno || 'Mañana']
                 );
+            }
+        }
+
+        // ── FIX: antes este bloque no existía en registrarPersonal (solo estaba
+        // en actualizarPersonal). Por eso al REGISTRAR un especialista nuevo con
+        // exámenes marcados en el formulario, esos exámenes nunca se guardaban
+        // en especialista_examen — el usuario y su fila en `especialista` sí se
+        // creaban, pero las asignaciones se perdían silenciosamente.
+        if (listaRoles.includes(3) && Array.isArray(examenes_asignados) && examenes_asignados.length > 0) {
+            const espRes = await client.query(
+                `SELECT id_especialista FROM especialista WHERE id_usuario = $1`, [id_usuario]
+            );
+            if (espRes.rowCount > 0) {
+                const id_especialista = espRes.rows[0].id_especialista;
+                for (const idExamen of examenes_asignados) {
+                    await client.query(
+                        `INSERT INTO especialista_examen (id_especialista, id_examen, estado)
+                         VALUES ($1, $2, TRUE)
+                         ON CONFLICT (id_especialista, id_examen) DO UPDATE SET estado = TRUE`,
+                        [id_especialista, idExamen]
+                    );
+                }
             }
         }
 
@@ -194,11 +216,21 @@ registrarPersonal: async (req, res) => {
                 );
                 if (espRes.rowCount > 0) {
                     const id_especialista = espRes.rows[0].id_especialista;
-                    await client.query(`DELETE FROM especialista_examen WHERE id_especialista = $1`, [id_especialista]);
+                    // ── FIX: en vez de DELETE físico (que rompe el historial e
+                    // ignora el patrón de borrado lógico usado en el resto del
+                    // sistema), desactivamos todo y reactivamos/insertamos solo
+                    // lo que venga marcado. Esto es consistente con `estado`
+                    // como columna de control que ya usa el resto del código
+                    // (getByUsuarioId filtra por ee.estado = TRUE).
+                    await client.query(
+                        `UPDATE especialista_examen SET estado = FALSE WHERE id_especialista = $1`,
+                        [id_especialista]
+                    );
                     for (const idExamen of examenes_asignados) {
                         await client.query(
-                            `INSERT INTO especialista_examen (id_especialista, id_examen) 
-                             VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                            `INSERT INTO especialista_examen (id_especialista, id_examen, estado)
+                             VALUES ($1, $2, TRUE)
+                             ON CONFLICT (id_especialista, id_examen) DO UPDATE SET estado = TRUE`,
                             [id_especialista, idExamen]
                         );
                     }

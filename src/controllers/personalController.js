@@ -5,78 +5,115 @@ const { registrarAuditoria } = require('../helpers/auditoria'); // ← NUEVO
 const personalController = {
 
     // ── 1. REGISTRAR PERSONAL MULTI-ROL ──────────────────────────────────────
-    registrarPersonal: async (req, res) => {
-        const client = await pool.connect();
-        try {
-            const {
-                id_rol, id_roles, cedula, nombres, apellidos,
-                correo, username, password,
-                cargo, especialidad, turno,
-            } = req.body;
+registrarPersonal: async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const {
+            id_rol, id_roles, cedula, nombres, apellidos,
+            correo, username, password,
+            cargo, especialidad, turno,
+        } = req.body;
 
-            await client.query('BEGIN');
+        await client.query('BEGIN');
 
+        // ── NUEVO: verificar si la cédula ya existe (ej: registrado como paciente en el móvil) ──
+        const { rows: existente } = await client.query(
+            `SELECT id_usuario FROM usuario WHERE cedula = $1`,
+            [cedula]
+        );
+
+        let id_usuario;
+
+        if (existente.length > 0) {
+            // Ya existe → reutilizamos el mismo usuario, solo actualizamos sus datos personales.
+            // NO tocamos username/password aquí: mantenemos el login que ya tenía (móvil),
+            // salvo que el admin haya escrito explícitamente una nueva contraseña.
+            id_usuario = existente[0].id_usuario;
+
+            if (password && password.trim() !== "") {
+                const hashedPassword = await bcrypt.hash(password, 10);
+                await client.query(
+                    `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3, username=$4, password=$5
+                     WHERE id_usuario=$6`,
+                    [nombres, apellidos, correo, username, hashedPassword, id_usuario]
+                );
+            } else {
+                await client.query(
+                    `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3
+                     WHERE id_usuario=$4`,
+                    [nombres, apellidos, correo, id_usuario]
+                );
+            }
+        } else {
+            // No existe → se crea el usuario desde cero (flujo original)
             const hashedPassword = await bcrypt.hash(password, 10);
-
             const userRes = await client.query(
                 `INSERT INTO usuario (cedula, nombres, apellidos, correo, username, password)
                  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_usuario`,
                 [cedula, nombres, apellidos, correo, username, hashedPassword]
             );
-            const id_usuario = userRes.rows[0].id_usuario;
+            id_usuario = userRes.rows[0].id_usuario;
+        }
 
-            const rolesSet = new Set([id_rol, ...(id_roles || [])].filter(Boolean).map(id => parseInt(id, 10)));
-            const listaRoles = Array.from(rolesSet);
+        const rolesSet = new Set([id_rol, ...(id_roles || [])].filter(Boolean).map(id => parseInt(id, 10)));
+        const listaRoles = Array.from(rolesSet);
 
-            for (const rolIdNum of listaRoles) {
-                await client.query(
-                    `INSERT INTO usuario_rol (id_usuario, id_rol, activo) VALUES ($1, $2, TRUE)
-                     ON CONFLICT (id_usuario, id_rol) DO UPDATE SET activo = TRUE`,
-                    [id_usuario, rolIdNum]
-                );
-
-                if (rolIdNum === 1) {
-                    await client.query(
-                        `INSERT INTO administrador (id_usuario, cargo) VALUES ($1, $2)
-                         ON CONFLICT (id_usuario) DO UPDATE SET cargo = EXCLUDED.cargo`,
-                        [id_usuario, cargo || 'Personal Administrativo']
-                    );
-                }
-                if (rolIdNum === 3) {
-                    await client.query(
-                        `INSERT INTO especialista (id_usuario, especialidad) VALUES ($1, $2)
-                         ON CONFLICT (id_usuario) DO UPDATE SET especialidad = EXCLUDED.especialidad`,
-                        [id_usuario, especialidad || 'General']
-                    );
-                }
-                if (rolIdNum === 4) {
-                    await client.query(
-                        `INSERT INTO asistente_analista (id_usuario, turno) VALUES ($1, $2)
-                         ON CONFLICT (id_usuario) DO UPDATE SET turno = EXCLUDED.turno`,
-                        [id_usuario, turno || 'Mañana']
-                    );
-                }
-            }
-
-            // Auditoría — usa client (dentro de transacción)
-            await registrarAuditoria(
-                client,
-                req.user.id,
-                req.user.id_usuario_rol,
-                'REGISTRO_PERSONAL',
-                `Se registró al usuario ${username} con múltiples roles asignados (IDs: ${listaRoles.join(', ')}). ID nuevo usuario: ${id_usuario}`
+        for (const rolIdNum of listaRoles) {
+            await client.query(
+                `INSERT INTO usuario_rol (id_usuario, id_rol, activo) VALUES ($1, $2, TRUE)
+                 ON CONFLICT (id_usuario, id_rol) DO UPDATE SET activo = TRUE`,
+                [id_usuario, rolIdNum]
             );
 
-            await client.query('COMMIT');
-            res.status(201).json({ msg: "Personal registrado exitosamente con Multi-Rol", id_usuario });
-        } catch (e) {
-            await client.query('ROLLBACK');
-            console.error("Error en registrarPersonal:", e.message);
-            res.status(500).json({ error: e.message });
-        } finally {
-            client.release();
+            if (rolIdNum === 1) {
+                await client.query(
+                    `INSERT INTO administrador (id_usuario, cargo) VALUES ($1, $2)
+                     ON CONFLICT (id_usuario) DO UPDATE SET cargo = EXCLUDED.cargo`,
+                    [id_usuario, cargo || 'Personal Administrativo']
+                );
+            }
+            if (rolIdNum === 3) {
+                await client.query(
+                    `INSERT INTO especialista (id_usuario, especialidad) VALUES ($1, $2)
+                     ON CONFLICT (id_usuario) DO UPDATE SET especialidad = EXCLUDED.especialidad`,
+                    [id_usuario, especialidad || 'General']
+                );
+            }
+            if (rolIdNum === 4) {
+                await client.query(
+                    `INSERT INTO asistente_analista (id_usuario, turno) VALUES ($1, $2)
+                     ON CONFLICT (id_usuario) DO UPDATE SET turno = EXCLUDED.turno`,
+                    [id_usuario, turno || 'Mañana']
+                );
+            }
         }
-    },
+
+        // Auditoría — usa client (dentro de transacción)
+        await registrarAuditoria(
+            client,
+            req.user.id,
+            req.user.id_usuario_rol,
+            'REGISTRO_PERSONAL',
+            existente.length > 0
+                ? `Se agregaron roles de personal (IDs: ${listaRoles.join(', ')}) a un usuario ya existente (ID: ${id_usuario}, cédula previamente registrada)`
+                : `Se registró al usuario ${username} con múltiples roles asignados (IDs: ${listaRoles.join(', ')}). ID nuevo usuario: ${id_usuario}`
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json({
+            msg: existente.length > 0
+                ? "El usuario ya existía (cédula registrada previamente); se le asignaron los nuevos roles de personal"
+                : "Personal registrado exitosamente con Multi-Rol",
+            id_usuario
+        });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Error en registrarPersonal:", e.message);
+        res.status(500).json({ error: e.message });
+    } finally {
+        client.release();
+    }
+},
 
     // ── 2. ACTUALIZAR PERSONAL MULTI-ROL ─────────────────────────────────────
     actualizarPersonal: async (req, res) => {

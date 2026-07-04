@@ -12,6 +12,7 @@ router.get('/perfil',  verifyToken, controller.obtenerPerfilPropio);
 router.put('/perfil',  verifyToken, controller.editarPerfilPropio);
 
 // Rutas protegidas
+router.get('/consultar-cedula/:cedula', verifyToken, controller.consultarPorCedula);
 router.get('/', verifyToken, controller.listarPacientes);
 router.put('/:id', verifyToken, controller.actualizarPaciente);
 router.delete('/:id', verifyToken, controller.desactivar);

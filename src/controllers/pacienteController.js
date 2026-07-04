@@ -48,20 +48,27 @@ const pacienteController = {
                 // Ya existe → reutilizamos el mismo usuario y solo le sumamos el rol de Paciente.
                 id_usuario = existente[0].id_usuario;
 
-                // Validar que correo/username no choquen con OTRO usuario distinto al que reutilizamos
-                const dupCheck = await client.query(
-                    `SELECT
-                        (SELECT COUNT(*) FROM usuario WHERE correo = $1 AND id_usuario != $3)::int AS correo_existe,
-                        (SELECT COUNT(*) FROM usuario WHERE username = $2 AND id_usuario != $3)::int AS username_existe`,
-                    [correo, username, id_usuario]
+                // Validar que el correo no choque con OTRO usuario distinto al que reutilizamos
+                const dupCheckCorreo = await client.query(
+                    `SELECT COUNT(*)::int AS correo_existe FROM usuario WHERE correo = $1 AND id_usuario != $2`,
+                    [correo, id_usuario]
                 );
-                if (dupCheck.rows[0].correo_existe > 0) {
+                if (dupCheckCorreo.rows[0].correo_existe > 0) {
                     await client.query('ROLLBACK');
                     return res.status(400).json({ error: 'El correo ya está registrado.' });
                 }
-                if (dupCheck.rows[0].username_existe > 0) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
+
+                // El username solo se valida/actualiza si de verdad se va a cambiar
+                // (ver más abajo: solo se toca si viene una contraseña nueva).
+                if (username && username.trim() !== "") {
+                    const dupCheckUsername = await client.query(
+                        `SELECT COUNT(*)::int AS username_existe FROM usuario WHERE username = $1 AND id_usuario != $2`,
+                        [username, id_usuario]
+                    );
+                    if (dupCheckUsername.rows[0].username_existe > 0) {
+                        await client.query('ROLLBACK');
+                        return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
+                    }
                 }
 
                 // NO tocamos username/password si no se envía una contraseña nueva:
@@ -126,24 +133,32 @@ const pacienteController = {
                 [id_usuario]
             );
 
-            // NOTA: requiere una restricción UNIQUE sobre paciente.id_usuario para que
-            // el ON CONFLICT funcione (ya debería existir por ser una relación 1 a 1 con usuario).
-            await client.query(
-                `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (id_usuario) DO UPDATE SET
-                    fecha_nacimiento = EXCLUDED.fecha_nacimiento,
-                    telefono = EXCLUDED.telefono,
-                    direccion = EXCLUDED.direccion,
-                    genero = EXCLUDED.genero`,
-                [
-                    id_usuario,
-                    fecha_nacimiento,
-                    telefono   || null,
-                    direccion  || null,
-                    genero     || null,
-                ]
+            // paciente.id_usuario no tiene restricción UNIQUE en la base actual, así que
+            // no podemos usar ON CONFLICT. Verificamos manualmente si ya existe la fila.
+            const { rows: pacienteExistente } = await client.query(
+                `SELECT id_paciente FROM paciente WHERE id_usuario = $1`,
+                [id_usuario]
             );
+
+            if (pacienteExistente.length > 0) {
+                await client.query(
+                    `UPDATE paciente SET fecha_nacimiento=$1, telefono=$2, direccion=$3, genero=$4
+                     WHERE id_usuario=$5`,
+                    [fecha_nacimiento, telefono || null, direccion || null, genero || null, id_usuario]
+                );
+            } else {
+                await client.query(
+                    `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
+                     VALUES ($1, $2, $3, $4, $5)`,
+                    [
+                        id_usuario,
+                        fecha_nacimiento,
+                        telefono   || null,
+                        direccion  || null,
+                        genero     || null,
+                    ]
+                );
+            }
 
             const responsable    = req.user ? req.user.id           : id_usuario;
             const rolResponsable = req.user ? req.user.id_usuario_rol : null;
@@ -170,6 +185,37 @@ const pacienteController = {
             res.status(500).json({ error: e.message });
         } finally {
             client.release();
+        }
+    },
+
+    // ── CONSULTAR POR CÉDULA (uso interno, para autocompletar el formulario) ──
+    // No es la consulta al SRI (esa es /documento/consultar/:cedula). Esta busca
+    // en NUESTRA base si la cédula ya pertenece a un usuario existente (por ej.
+    // ya registrado como personal) para poder autocompletar sus datos conocidos
+    // y, al guardar, simplemente sumarle el rol de Paciente en vez de duplicarlo.
+    consultarPorCedula: async (req, res) => {
+        try {
+            const { cedula } = req.params;
+            const query = `
+                SELECT
+                    u.id_usuario, u.username, u.nombres, u.apellidos, u.correo,
+                    p.telefono, p.direccion, p.genero, p.fecha_nacimiento,
+                    STRING_AGG(DISTINCT r.nombre, ', ') AS roles
+                FROM usuario u
+                LEFT JOIN paciente p ON p.id_usuario = u.id_usuario
+                LEFT JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario AND ur.activo = TRUE
+                LEFT JOIN rol r ON r.id_rol = ur.id_rol
+                WHERE u.cedula = $1
+                GROUP BY u.id_usuario, u.username, p.telefono, p.direccion, p.genero, p.fecha_nacimiento`;
+            const { rows } = await pool.query(query, [cedula]);
+
+            if (rows.length === 0) {
+                return res.status(404).json({ existe: false, msg: 'Cédula no registrada aún en el sistema.' });
+            }
+
+            res.json({ existe: true, ...rows[0] });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
         }
     },
 

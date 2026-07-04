@@ -4,6 +4,36 @@ const { registrarAuditoria } = require('../helpers/auditoria'); // ← NUEVO
 
 const personalController = {
 
+    // ── 0. CONSULTAR POR CÉDULA (uso interno, para autocompletar el formulario) ─
+    // No es la consulta al SRI (esa es /documento/consultar/:cedula). Esta busca
+    // en NUESTRA base si la cédula ya pertenece a un usuario existente (por ej.
+    // ya registrado como paciente en el app) para poder autocompletar sus datos
+    // conocidos y, al guardar, simplemente sumarle el/los rol(es) de personal
+    // en vez de crear una cuenta nueva y pisar su usuario/contraseña actuales.
+    consultarPorCedula: async (req, res) => {
+        try {
+            const { cedula } = req.params;
+            const query = `
+                SELECT
+                    u.id_usuario, u.username, u.nombres, u.apellidos, u.correo,
+                    STRING_AGG(DISTINCT r.nombre, ', ') AS roles
+                FROM usuario u
+                LEFT JOIN usuario_rol ur ON ur.id_usuario = u.id_usuario AND ur.activo = TRUE
+                LEFT JOIN rol r ON r.id_rol = ur.id_rol
+                WHERE u.cedula = $1
+                GROUP BY u.id_usuario, u.username`;
+            const { rows } = await pool.query(query, [cedula]);
+
+            if (rows.length === 0) {
+                return res.status(404).json({ existe: false, msg: 'Cédula no registrada aún en el sistema.' });
+            }
+
+            res.json({ existe: true, ...rows[0] });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
+
     // ── 1. REGISTRAR PERSONAL MULTI-ROL ──────────────────────────────────────
 registrarPersonal: async (req, res) => {
     const client = await pool.connect();

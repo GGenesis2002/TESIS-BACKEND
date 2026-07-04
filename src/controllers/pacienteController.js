@@ -34,50 +34,117 @@ const pacienteController = {
                 telefono, direccion, genero
             } = req.body;
 
-            // ── Validar duplicados ANTES de abrir transacción ─────────────────
-            const dupCheck = await pool.query(
-                `SELECT
-                    (SELECT COUNT(*) FROM usuario  WHERE cedula   = $1)::int AS cedula_existe,
-                    (SELECT COUNT(*) FROM usuario  WHERE correo   = $2)::int AS correo_existe,
-                    (SELECT COUNT(*) FROM usuario  WHERE username = $3)::int AS username_existe,
-                    (SELECT COUNT(*) FROM paciente WHERE telefono = $4 AND telefono IS NOT NULL AND telefono != '')::int AS telefono_existe`,
-                [cedula, correo, username, telefono]
-            );
-            const { cedula_existe, correo_existe, username_existe, telefono_existe } = dupCheck.rows[0];
-            if (cedula_existe   > 0) return res.status(400).json({ error: 'La cédula ya está registrada.' });
-            if (correo_existe   > 0) return res.status(400).json({ error: 'El correo ya está registrado.' });
-            if (username_existe > 0) return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
-            if (telefono_existe > 0) return res.status(400).json({ error: 'El teléfono ya está registrado.' });
-            // ─────────────────────────────────────────────────────────────────
-
             await client.query('BEGIN');
 
-            const hashedPassword = await bcrypt.hash(password, 10);
-
-            const userRes = await client.query(
-                `INSERT INTO usuario (cedula, nombres, apellidos, correo, username, password)
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_usuario`,
-                [cedula, nombres, apellidos, correo, username, hashedPassword]
+            // ── Verificar si la cédula ya existe (ej: la persona ya es personal del laboratorio) ──
+            const { rows: existente } = await client.query(
+                `SELECT id_usuario FROM usuario WHERE cedula = $1`,
+                [cedula]
             );
-            const id_usuario = userRes.rows[0].id_usuario;
+
+            let id_usuario;
+
+            if (existente.length > 0) {
+                // Ya existe → reutilizamos el mismo usuario y solo le sumamos el rol de Paciente.
+                id_usuario = existente[0].id_usuario;
+
+                // Validar que correo/username no choquen con OTRO usuario distinto al que reutilizamos
+                const dupCheck = await client.query(
+                    `SELECT
+                        (SELECT COUNT(*) FROM usuario WHERE correo = $1 AND id_usuario != $3)::int AS correo_existe,
+                        (SELECT COUNT(*) FROM usuario WHERE username = $2 AND id_usuario != $3)::int AS username_existe`,
+                    [correo, username, id_usuario]
+                );
+                if (dupCheck.rows[0].correo_existe > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'El correo ya está registrado.' });
+                }
+                if (dupCheck.rows[0].username_existe > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
+                }
+
+                // NO tocamos username/password si no se envía una contraseña nueva:
+                // mantenemos el login que ya tenía (ej. como personal del laboratorio).
+                if (password && password.trim() !== "") {
+                    const hashedPassword = await bcrypt.hash(password, 10);
+                    await client.query(
+                        `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3, username=$4, password=$5
+                         WHERE id_usuario=$6`,
+                        [nombres, apellidos, correo, username, hashedPassword, id_usuario]
+                    );
+                } else {
+                    await client.query(
+                        `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3
+                         WHERE id_usuario=$4`,
+                        [nombres, apellidos, correo, id_usuario]
+                    );
+                }
+            } else {
+                // Cédula nueva → validar duplicados de correo/username y crear el usuario desde cero
+                const dupCheck = await client.query(
+                    `SELECT
+                        (SELECT COUNT(*) FROM usuario WHERE correo   = $1)::int AS correo_existe,
+                        (SELECT COUNT(*) FROM usuario WHERE username = $2)::int AS username_existe`,
+                    [correo, username]
+                );
+                if (dupCheck.rows[0].correo_existe > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'El correo ya está registrado.' });
+                }
+                if (dupCheck.rows[0].username_existe > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
+                }
+
+                const hashedPassword = await bcrypt.hash(password, 10);
+                const userRes = await client.query(
+                    `INSERT INTO usuario (cedula, nombres, apellidos, correo, username, password)
+                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_usuario`,
+                    [cedula, nombres, apellidos, correo, username, hashedPassword]
+                );
+                id_usuario = userRes.rows[0].id_usuario;
+            }
+
+            // Validar teléfono duplicado entre pacientes (excluyendo al propio usuario, por si acaso)
+            if (telefono && telefono.trim() !== "") {
+                const telCheck = await client.query(
+                    `SELECT COUNT(*)::int AS telefono_existe FROM paciente
+                     WHERE telefono = $1 AND id_usuario != $2`,
+                    [telefono, id_usuario]
+                );
+                if (telCheck.rows[0].telefono_existe > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'El teléfono ya está registrado.' });
+                }
+            }
 
             await client.query(
                 `INSERT INTO usuario_rol (id_usuario, id_rol, activo)
-                 VALUES ($1, (SELECT id_rol FROM rol WHERE nombre = 'Paciente'), TRUE)`,
+                 VALUES ($1, (SELECT id_rol FROM rol WHERE nombre = 'Paciente'), TRUE)
+                 ON CONFLICT (id_usuario, id_rol) DO UPDATE SET activo = TRUE`,
                 [id_usuario]
             );
 
-           await client.query(
-            `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
-            VALUES ($1, $2, $3, $4, $5)`,
-            [
-                id_usuario,
-                fecha_nacimiento,
-                telefono   || null,
-                direccion  || null,
-                genero     || null,
-            ]
-        );
+            // NOTA: requiere una restricción UNIQUE sobre paciente.id_usuario para que
+            // el ON CONFLICT funcione (ya debería existir por ser una relación 1 a 1 con usuario).
+            await client.query(
+                `INSERT INTO paciente (id_usuario, fecha_nacimiento, telefono, direccion, genero)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (id_usuario) DO UPDATE SET
+                    fecha_nacimiento = EXCLUDED.fecha_nacimiento,
+                    telefono = EXCLUDED.telefono,
+                    direccion = EXCLUDED.direccion,
+                    genero = EXCLUDED.genero`,
+                [
+                    id_usuario,
+                    fecha_nacimiento,
+                    telefono   || null,
+                    direccion  || null,
+                    genero     || null,
+                ]
+            );
+
             const responsable    = req.user ? req.user.id           : id_usuario;
             const rolResponsable = req.user ? req.user.id_usuario_rol : null;
 
@@ -86,11 +153,18 @@ const pacienteController = {
                 responsable,
                 rolResponsable,
                 'REGISTRO_PACIENTE',
-                `Se registró un nuevo paciente. ID Usuario: ${id_usuario}, Cédula: ${cedula}`
+                existente.length > 0
+                    ? `Se agregó el rol de Paciente a un usuario ya existente (ID: ${id_usuario}, cédula previamente registrada con otro rol)`
+                    : `Se registró un nuevo paciente. ID Usuario: ${id_usuario}, Cédula: ${cedula}`
             );
 
             await client.query('COMMIT');
-            res.status(201).json({ msg: 'Paciente registrado correctamente', id_usuario });
+            res.status(201).json({
+                msg: existente.length > 0
+                    ? 'El usuario ya existía (cédula registrada previamente); se le asignó el rol de Paciente'
+                    : 'Paciente registrado correctamente',
+                id_usuario
+            });
         } catch (e) {
             await client.query('ROLLBACK');
             res.status(500).json({ error: e.message });

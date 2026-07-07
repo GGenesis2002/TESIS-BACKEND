@@ -173,8 +173,8 @@ getArqueoCajaHoy: async (req, res) => {
 
         const query = `
             SELECT 
-                COALESCE(SUM(monto) FILTER (WHERE metodo_pago = 'Efectivo'), 0) as efectivo,
-                COALESCE(SUM(monto) FILTER (WHERE metodo_pago = 'Transferencia'), 0) as transferencia,
+                COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0) as efectivo,
+                COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) as transferencia,
                 0 as tarjeta
             FROM pago
             WHERE fecha_pago::date BETWEEN $1 AND $2;

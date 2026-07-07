@@ -403,67 +403,48 @@ getOrdenesPorUsuario: async (req, res) => {
 // GET /dashboard/ordenes-por-usuario
 // Devuelve las órdenes de hoy agrupadas por el usuario que las creó
 // ─────────────────────────────────────────────────────────────────────────────
-getOrdenesPorUsuario: async (req, res) => {
+// GET /dashboard/ingresos-por-usuario?desde=&hasta=
+getIngresosPorUsuario: async (req, res) => {
     try {
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoyISO = new Date().toISOString().split('T')[0];
+        const desde  = req.query.desde || hoyISO;
+        const hasta  = req.query.hasta || hoyISO;
 
         const result = await pool.query(`
             SELECT
-                o.id_orden,
-                o.numero_ticket,
-                o.estado,
-                o.fecha_orden,
-                COALESCE(o.total, 0)                                 AS total,
-                CONCAT(up.nombres, ' ', up.apellidos)                AS paciente,
-                CONCAT(uu.nombres, ' ', uu.apellidos)                AS nombre_usuario,
-                uu.username                                          AS username,
-                COALESCE(ur1.rol, 'Sin rol')                         AS rol
+                u.id_usuario,
+                CONCAT(u.nombres, ' ', u.apellidos)      AS usuario,
+                COALESCE(ur1.rol, 'Sin rol')             AS rol,
+                COUNT(o.id_orden)::int                   AS total_ordenes,
+                COALESCE(SUM(o.total), 0)::numeric       AS total_generado
             FROM orden_medica o
-            LEFT JOIN paciente          p   ON o.id_paciente   = p.id_paciente
-            LEFT JOIN usuario           up  ON p.id_usuario    = up.id_usuario
             INNER JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
-            INNER JOIN usuario           uu  ON aa.id_usuario   = uu.id_usuario
+            INNER JOIN usuario            u  ON aa.id_usuario   = u.id_usuario
             LEFT JOIN LATERAL (
                 SELECT r.nombre AS rol
                 FROM usuario_rol ur
                 JOIN rol r ON ur.id_rol = r.id_rol
-                WHERE ur.id_usuario = uu.id_usuario
+                WHERE ur.id_usuario = u.id_usuario
                   AND ur.activo = TRUE
                 ORDER BY ur.id_usuario_rol DESC
                 LIMIT 1
             ) ur1 ON TRUE
-            WHERE o.fecha_orden::date = $1
-            ORDER BY uu.nombres ASC, o.fecha_orden DESC
-        `, [hoy]);
+            WHERE o.fecha_orden::date BETWEEN $1 AND $2
+            GROUP BY u.id_usuario, u.nombres, u.apellidos, ur1.rol
+            ORDER BY total_generado DESC
+        `, [desde, hasta]);
 
-        const mapa = {};
-        for (const row of result.rows) {
-            const key = row.username || 'sin_usuario';
-            if (!mapa[key]) {
-                mapa[key] = {
-                    usuario: row.nombre_usuario || 'Usuario desconocido',
-                    username: row.username,
-                    rol: row.rol || 'Sin rol',
-                    ordenes: [],
-                };
-            }
-            mapa[key].ordenes.push({
-                id_orden:      row.id_orden,
-                numero_ticket: row.numero_ticket,
-                estado:        row.estado,
-                fecha_orden:   row.fecha_orden,
-                total:         parseFloat(row.total),
-                paciente:      row.paciente ? row.paciente.trim() : '—',
-            });
-        }
+        const rowsCorregidas = result.rows.map(row => ({
+            ...row,
+            total_generado: parseFloat(row.total_generado)
+        }));
 
-        res.json(Object.values(mapa));
+        res.json(rowsCorregidas);
     } catch (e) {
-        console.error('Error crítico en getOrdenesPorUsuario:', e.message);
-        res.status(500).json({ error: "Fallo interno al procesar órdenes por usuario." });
+        console.error('Error crítico en getIngresosPorUsuario:', e.message);
+        res.status(500).json({ error: "Fallo interno al calcular ingresos por usuario." });
     }
 },
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /usuarios/activos-hoy
 // Lista de usuarios que han iniciado sesión hoy (para el modal de usuarios)

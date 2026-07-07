@@ -172,12 +172,27 @@ getArqueoCajaHoy: async (req, res) => {
         const hasta  = req.query.hasta || hoyISO;
 
         const query = `
-            SELECT 
-                COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0) as efectivo,
-                COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) as transferencia,
-                0 as tarjeta
-            FROM pago
-            WHERE fecha_pago::date BETWEEN $1 AND $2;
+            WITH pagos AS (
+                SELECT
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS transferencia
+                FROM pago
+                WHERE fecha_pago::date BETWEEN $1 AND $2
+            ),
+            reembolsos AS (
+                SELECT
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Efectivo'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS transferencia
+                FROM reembolso
+                WHERE fecha_reembolso::date BETWEEN $1 AND $2
+            )
+            SELECT
+                (pagos.efectivo - reembolsos.efectivo)           AS efectivo,
+                (pagos.transferencia - reembolsos.transferencia) AS transferencia,
+                reembolsos.efectivo                              AS reembolsos_efectivo,
+                reembolsos.transferencia                         AS reembolsos_transferencia,
+                0                                                AS tarjeta
+            FROM pagos, reembolsos;
         `;
 
         const result = await pool.query(query, [desde, hasta]);
@@ -411,15 +426,33 @@ getIngresosPorUsuario: async (req, res) => {
         const hasta  = req.query.hasta || hoyISO;
 
         const result = await pool.query(`
+            WITH cobros AS (
+                SELECT id_secretaria,
+                       COUNT(DISTINCT id_orden)::int AS total_ordenes,
+                       SUM(monto)                     AS total_cobrado
+                FROM pago
+                WHERE fecha_pago::date BETWEEN $1 AND $2
+                GROUP BY id_secretaria
+            ),
+            devoluciones AS (
+                SELECT id_secretaria,
+                       SUM(monto) AS total_reembolsado
+                FROM reembolso
+                WHERE fecha_reembolso::date BETWEEN $1 AND $2
+                GROUP BY id_secretaria
+            )
             SELECT
                 u.id_usuario,
-                CONCAT(u.nombres, ' ', u.apellidos)      AS usuario,
-                COALESCE(ur1.rol, 'Sin rol')             AS rol,
-                COUNT(o.id_orden)::int                   AS total_ordenes,
-                COALESCE(SUM(o.total), 0)::numeric       AS total_generado
-            FROM orden_medica o
-            INNER JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
-            INNER JOIN usuario            u  ON aa.id_usuario   = u.id_usuario
+                CONCAT(u.nombres, ' ', u.apellidos)          AS usuario,
+                COALESCE(ur1.rol, 'Sin rol')                 AS rol,
+                COALESCE(cobros.total_ordenes, 0)            AS total_ordenes,
+                COALESCE(cobros.total_cobrado, 0)
+                    - COALESCE(devoluciones.total_reembolsado, 0)   AS total_generado,
+                COALESCE(devoluciones.total_reembolsado, 0)  AS total_reembolsado
+            FROM asistente_analista aa
+            JOIN usuario u ON aa.id_usuario = u.id_usuario
+            LEFT JOIN cobros       ON cobros.id_secretaria       = aa.id_secretaria
+            LEFT JOIN devoluciones ON devoluciones.id_secretaria = aa.id_secretaria
             LEFT JOIN LATERAL (
                 SELECT r.nombre AS rol
                 FROM usuario_rol ur
@@ -429,14 +462,14 @@ getIngresosPorUsuario: async (req, res) => {
                 ORDER BY ur.id_usuario_rol DESC
                 LIMIT 1
             ) ur1 ON TRUE
-            WHERE o.fecha_orden::date BETWEEN $1 AND $2
-            GROUP BY u.id_usuario, u.nombres, u.apellidos, ur1.rol
+            WHERE cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL
             ORDER BY total_generado DESC
         `, [desde, hasta]);
 
         const rowsCorregidas = result.rows.map(row => ({
             ...row,
-            total_generado: parseFloat(row.total_generado)
+            total_generado:    parseFloat(row.total_generado),
+            total_reembolsado: parseFloat(row.total_reembolsado),
         }));
 
         res.json(rowsCorregidas);

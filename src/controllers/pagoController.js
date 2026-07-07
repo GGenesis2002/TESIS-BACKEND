@@ -123,6 +123,7 @@ const pagoController = {
                 e.message.includes('inválido') ||
                 e.message.includes('diferente') ||
                 e.message.includes('turno de caja');
+                
             res.status(esErrorNegocio ? 400 : 500).json({ error: e.message });
         }
     },
@@ -223,6 +224,7 @@ const pagoController = {
                 e.message.includes('obligatorio') ||
                 e.message.includes('inválido') ||
                 e.message.includes('mayor a 0');
+                 e.message.includes('turno de caja');
             res.status(esErrorNegocio ? 400 : 500).json({ error: e.message });
         }
     },

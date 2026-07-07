@@ -300,12 +300,15 @@ const pagoModule = {
                 );
             }
 
-            // 4. Asociar al turno de caja abierto de la secretaria, si tiene uno
+            // 4. Exigir turno de caja abierto (igual que en registrarPago).
             const turnoRes = await client.query(
                 `SELECT id_cierre FROM cierre_caja WHERE id_secretaria = $1 AND estado = 'ABIERTO'`,
                 [id_secretaria]
             );
-            const id_cierre = turnoRes.rows.length > 0 ? turnoRes.rows[0].id_cierre : null;
+            if (turnoRes.rows.length === 0) {
+                throw new Error('Debes abrir un turno de caja antes de procesar reembolsos.');
+            }
+            const id_cierre = turnoRes.rows[0].id_cierre;
 
             // 5. Insertar el reembolso
             const referenciaGuardada = referencia ? referencia.trim().toUpperCase() : null;

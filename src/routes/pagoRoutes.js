@@ -17,4 +17,11 @@ router.get('/ordenes-generadas', verifyToken, pagoController.obtenerOrdenesGener
 
 // GET /pagos/todos — Historial completo de pagos para filtros avanzados en caja
 router.get('/todos', verifyToken, pagoController.verTodosPagos);
+
+// POST /pagos/reembolsar — Registra el reembolso (total o parcial) de una orden pagada
+router.post('/reembolsar', verifyToken, pagoController.procesarReembolso);
+
+// GET /pagos/reembolsos — Historial de reembolsos procesados
+router.get('/reembolsos', verifyToken, pagoController.verReembolsos);
+
 module.exports = router;

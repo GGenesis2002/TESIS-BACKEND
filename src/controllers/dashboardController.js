@@ -171,7 +171,7 @@ getArqueoCajaHoy: async (req, res) => {
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
-        const query = `
+        const queryTotales = `
             WITH pagos AS (
                 SELECT
                     COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS efectivo,
@@ -189,17 +189,69 @@ getArqueoCajaHoy: async (req, res) => {
             SELECT
                 (pagos.efectivo - reembolsos.efectivo)           AS efectivo,
                 (pagos.transferencia - reembolsos.transferencia) AS transferencia,
-                pagos.efectivo                                   AS cobrado_efectivo,
-                pagos.transferencia                              AS cobrado_transferencia,
-                reembolsos.efectivo                              AS reembolsos_efectivo,
-                reembolsos.transferencia                         AS reembolsos_transferencia,
+                pagos.efectivo                                   AS efectivo_cobrado,
+                reembolsos.efectivo                              AS efectivo_reembolsado,
+                pagos.transferencia                              AS transferencia_cobrada,
+                reembolsos.transferencia                         AS transferencia_reembolsada,
                 0                                                AS tarjeta
             FROM pagos, reembolsos;
         `;
 
-        const result = await pool.query(query, [desde, hasta]);
+        // Detalle transacción por transacción para el listado "Movimientos del turno".
+        // Se arma con UNION ALL (cobros + reembolsos) uniendo usuario y ticket de la orden.
+        const queryMovimientos = `
+            SELECT usuario, tipo, metodo, monto, hora, ticket
+            FROM (
+                SELECT
+                    CONCAT(u.nombres, ' ', u.apellidos)              AS usuario,
+                    'cobro'                                          AS tipo,
+                    CASE
+                        WHEN pa.metodo_pago LIKE 'Efectivo%'      THEN 'Efectivo'
+                        WHEN pa.metodo_pago LIKE 'Transferencia%' THEN 'Transferencia'
+                        ELSE pa.metodo_pago
+                    END                                              AS metodo,
+                    pa.monto                                         AS monto,
+                    pa.fecha_pago                                    AS hora,
+                    om.numero_ticket                                 AS ticket
+                FROM pago pa
+                LEFT JOIN orden_medica om        ON pa.id_orden = om.id_orden
+                LEFT JOIN asistente_analista aa  ON pa.id_secretaria = aa.id_secretaria
+                LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
+                WHERE pa.fecha_pago::date BETWEEN $1 AND $2
 
-        res.json(result.rows[0]);
+                UNION ALL
+
+                SELECT
+                    CONCAT(u.nombres, ' ', u.apellidos)              AS usuario,
+                    'reembolso'                                      AS tipo,
+                    re.metodo_reembolso                              AS metodo,
+                    re.monto                                         AS monto,
+                    re.fecha_reembolso                               AS hora,
+                    om.numero_ticket                                 AS ticket
+                FROM reembolso re
+                LEFT JOIN orden_medica om        ON re.id_orden = om.id_orden
+                LEFT JOIN asistente_analista aa  ON re.id_secretaria = aa.id_secretaria
+                LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
+                WHERE re.fecha_reembolso::date BETWEEN $1 AND $2
+            ) mov
+            ORDER BY hora DESC;
+        `;
+
+        const [resTotales, resMovimientos] = await Promise.all([
+            pool.query(queryTotales, [desde, hasta]),
+            pool.query(queryMovimientos, [desde, hasta]),
+        ]);
+
+        const movimientos = resMovimientos.rows.map(m => ({
+            usuario: m.usuario || 'No registrado',
+            tipo: m.tipo,
+            metodo: m.metodo,
+            monto: parseFloat(m.monto),
+            hora: m.hora,
+            ticket: m.ticket || null,
+        }));
+
+        res.json({ ...resTotales.rows[0], movimientos });
     } catch (e) {
         console.error("Error en getArqueoCajaHoy:", e);
         res.status(500).json({ error: "Error en el servidor al calcular el arqueo" });

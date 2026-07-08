@@ -138,6 +138,18 @@ const insumoModule = {
           id_tipo_muestra || null,
         ]
       );
+      // Registrar el stock inicial también como movimiento tipo ENTRADA,
+      // para que el historial de "movimientos" refleje el arranque del
+      // insumo y no dependa únicamente de la columna stock_inicial.
+      // Si se crea con 0 unidades no tiene sentido dejar un movimiento vacío.
+      if (stockInicial > 0) {
+        await client.query(
+          `INSERT INTO movimientos (id_insumo, id_usuario, tipo_movimiento, cantidad, observacion)
+           VALUES ($1, $2, 'ENTRADA', $3, $4)`,
+          [rows[0].id_insumo, id_usuario, stockInicial, 'Stock inicial de creación']
+        );
+      }
+
       await client.query(
         "INSERT INTO auditoria (id_usuario, accion, descripcion) VALUES ($1, $2, $3)",
         [id_usuario, 'CREAR_INSUMO',

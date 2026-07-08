@@ -22,7 +22,11 @@ const dashboardController = {
                            OR dr.valor_obtenido::numeric < pe.rango_min
                        ))                                                                                           AS criticos,
                     (SELECT COUNT(*) FROM usuario WHERE ultimo_acceso::date = $1)                                    AS activos,
-                    (SELECT COALESCE(SUM(monto),0) FROM pago WHERE fecha_pago::date = $1)                           AS ingresos_hoy,
+                    (
+                        (SELECT COALESCE(SUM(monto),0) FROM pago WHERE fecha_pago::date = $1)
+                        -
+                        (SELECT COALESCE(SUM(monto),0) FROM reembolso WHERE fecha_reembolso::date = $1)
+                    )                                                                                              AS ingresos_hoy,
                     (SELECT COUNT(*) FROM insumos WHERE stock_actual <= stock_minimo)                                AS stock_bajo
             `;
             const stats            = await pool.query(query, [hoy]);

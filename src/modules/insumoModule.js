@@ -113,20 +113,27 @@ const insumoModule = {
       id_tipo_muestra,            // ← nuevo campo
     } = data;
 
+    // stock_inicial queda fijo para siempre con el valor de arranque del
+    // insumo (el mismo que stock_actual al momento de crearlo). Sirve como
+    // referencia histórica: aunque stock_actual suba o baje con entradas,
+    // salidas y consumo por receta, stock_inicial nunca se toca desde aquí.
+    const stockInicial = stock_actual || 0;
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
         `INSERT INTO insumos
            (id_categoria_insumo, nombre, descripcion, unidad_medida,
-            stock_actual, stock_minimo, id_tipo_muestra)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            stock_actual, stock_inicial, stock_minimo, id_tipo_muestra)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [
           id_categoria_insumo || null,
           nombre,
           descripcion || null,
           unidad_medida,
-          stock_actual  || 0,
+          stockInicial,
+          stockInicial,
           stock_minimo  || 0,
           id_tipo_muestra || null,
         ]

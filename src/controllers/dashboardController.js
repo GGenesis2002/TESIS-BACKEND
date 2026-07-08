@@ -193,6 +193,9 @@ getArqueoCajaHoy: async (req, res) => {
                 reembolsos.efectivo                              AS efectivo_reembolsado,
                 pagos.transferencia                              AS transferencia_cobrada,
                 reembolsos.transferencia                         AS transferencia_reembolsada,
+                -- Alias con el nombre viejo que usa Admindashboard.jsx (misma info que arriba)
+                reembolsos.efectivo                              AS reembolsos_efectivo,
+                reembolsos.transferencia                         AS reembolsos_transferencia,
                 0                                                AS tarjeta
             FROM pagos, reembolsos;
         `;

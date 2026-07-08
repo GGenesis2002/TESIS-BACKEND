@@ -39,6 +39,12 @@ router.get('/secretaria/reporte', verifyToken, dashboardController.descargarRepo
  */
 router.get('/arqueo-hoy', verifyToken, dashboardController.getArqueoCajaHoy);
 
+/**
+ * @route   GET /api/dashboard/arqueo-por-usuario
+ * @desc    Desglose del arqueo del día por usuario y método de pago (drill-down del modal)
+ */
+router.get('/arqueo-por-usuario', verifyToken, dashboardController.getArqueoPorUsuario);
+
 
 // ─── ENDPOINTS DE DRILL-DOWN (DETALLES DEL DASHBOARD) ────────────────────────
 

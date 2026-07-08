@@ -189,6 +189,8 @@ getArqueoCajaHoy: async (req, res) => {
             SELECT
                 (pagos.efectivo - reembolsos.efectivo)           AS efectivo,
                 (pagos.transferencia - reembolsos.transferencia) AS transferencia,
+                pagos.efectivo                                   AS cobrado_efectivo,
+                pagos.transferencia                              AS cobrado_transferencia,
                 reembolsos.efectivo                              AS reembolsos_efectivo,
                 reembolsos.transferencia                         AS reembolsos_transferencia,
                 0                                                AS tarjeta
@@ -203,6 +205,80 @@ getArqueoCajaHoy: async (req, res) => {
         res.status(500).json({ error: "Error en el servidor al calcular el arqueo" });
     }
 },
+    // ─── DRILL-DOWN: ARQUEO DEL DÍA DESGLOSADO POR USUARIO ──────────────────
+    getArqueoPorUsuario: async (req, res) => {
+        try {
+            const hoyISO = new Date().toISOString().split('T')[0];
+            const desde  = req.query.desde || hoyISO;
+            const hasta  = req.query.hasta || hoyISO;
+
+            const query = `
+                WITH cobros AS (
+                    SELECT
+                        id_secretaria,
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS cobrado_efectivo,
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS cobrado_transferencia
+                    FROM pago
+                    WHERE fecha_pago::date BETWEEN $1 AND $2
+                    GROUP BY id_secretaria
+                ),
+                devoluciones AS (
+                    SELECT
+                        id_secretaria,
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Efectivo'), 0)      AS reembolsado_efectivo,
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS reembolsado_transferencia
+                    FROM reembolso
+                    WHERE fecha_reembolso::date BETWEEN $1 AND $2
+                    GROUP BY id_secretaria
+                )
+                SELECT
+                    u.id_usuario,
+                    CONCAT(u.nombres, ' ', u.apellidos)                          AS usuario,
+                    COALESCE(ur1.rol, 'Sin rol')                                 AS rol,
+                    COALESCE(cobros.cobrado_efectivo, 0)                         AS cobrado_efectivo,
+                    COALESCE(cobros.cobrado_transferencia, 0)                    AS cobrado_transferencia,
+                    COALESCE(devoluciones.reembolsado_efectivo, 0)               AS reembolsado_efectivo,
+                    COALESCE(devoluciones.reembolsado_transferencia, 0)          AS reembolsado_transferencia,
+                    COALESCE(cobros.cobrado_efectivo, 0)
+                        - COALESCE(devoluciones.reembolsado_efectivo, 0)         AS neto_efectivo,
+                    COALESCE(cobros.cobrado_transferencia, 0)
+                        - COALESCE(devoluciones.reembolsado_transferencia, 0)    AS neto_transferencia
+                FROM asistente_analista aa
+                JOIN usuario u ON aa.id_usuario = u.id_usuario
+                LEFT JOIN cobros       ON cobros.id_secretaria       = aa.id_secretaria
+                LEFT JOIN devoluciones ON devoluciones.id_secretaria = aa.id_secretaria
+                LEFT JOIN LATERAL (
+                    SELECT r.nombre AS rol
+                    FROM usuario_rol ur
+                    JOIN rol r ON ur.id_rol = r.id_rol
+                    WHERE ur.id_usuario = u.id_usuario
+                      AND ur.activo = TRUE
+                    ORDER BY ur.id_usuario_rol DESC
+                    LIMIT 1
+                ) ur1 ON TRUE
+                WHERE cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL
+                ORDER BY (neto_efectivo + neto_transferencia) DESC
+            `;
+
+            const result = await pool.query(query, [desde, hasta]);
+
+            const rows = result.rows.map(row => ({
+                ...row,
+                cobrado_efectivo:          parseFloat(row.cobrado_efectivo),
+                cobrado_transferencia:     parseFloat(row.cobrado_transferencia),
+                reembolsado_efectivo:      parseFloat(row.reembolsado_efectivo),
+                reembolsado_transferencia: parseFloat(row.reembolsado_transferencia),
+                neto_efectivo:             parseFloat(row.neto_efectivo),
+                neto_transferencia:        parseFloat(row.neto_transferencia),
+            }));
+
+            res.json(rows);
+        } catch (e) {
+            console.error("Error en getArqueoPorUsuario:", e);
+            res.status(500).json({ error: "Error en el servidor al calcular el arqueo por usuario" });
+        }
+    },
+
     // ─── NUEVA ACCIÓN: DESCARGAR REPORTE MENSUAL EN CSV ─────────────────────
     descargarReporteMensual: async (req, res) => {
         try {

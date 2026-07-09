@@ -148,6 +148,7 @@ const pagoModule = {
                 MAX(p.fecha_pago)                         AS fecha_pago,
                 o.numero_ticket,
                 o.total                                   AS total_orden,
+                o.estado                                  AS estado_orden,
                 up.nombres,
                 up.apellidos,
                 up.cedula,
@@ -159,7 +160,7 @@ const pagoModule = {
             LEFT JOIN asistente_analista aa ON p.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            ua ON aa.id_usuario   = ua.id_usuario
             WHERE DATE(p.fecha_pago) = $1
-            GROUP BY p.id_orden, o.numero_ticket, o.total, up.nombres, up.apellidos, up.cedula, ua.username
+            GROUP BY p.id_orden, o.numero_ticket, o.total, o.estado, up.nombres, up.apellidos, up.cedula, ua.username
             ORDER BY MAX(p.fecha_pago) DESC`;
 
         const { rows } = await pool.query(query, [fecha]);
@@ -181,6 +182,7 @@ const pagoModule = {
                 MAX(p.fecha_pago)                         AS fecha_pago,
                 o.numero_ticket,
                 o.total                                   AS total_orden,
+                o.estado                                  AS estado_orden,
                 up.nombres,
                 up.apellidos,
                 up.cedula,
@@ -191,7 +193,7 @@ const pagoModule = {
             JOIN usuario            up  ON pac.id_usuario   = up.id_usuario
             LEFT JOIN asistente_analista aa ON p.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            ua ON aa.id_usuario   = ua.id_usuario
-            GROUP BY p.id_orden, o.numero_ticket, o.total, up.nombres, up.apellidos, up.cedula, ua.username
+            GROUP BY p.id_orden, o.numero_ticket, o.total, o.estado, up.nombres, up.apellidos, up.cedula, ua.username
             ORDER BY MAX(p.fecha_pago) DESC`;
 
         const { rows } = await pool.query(query);

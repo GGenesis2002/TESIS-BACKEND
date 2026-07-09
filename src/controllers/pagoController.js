@@ -223,8 +223,9 @@ const pagoController = {
                 e.message.includes('supera') ||
                 e.message.includes('obligatorio') ||
                 e.message.includes('inválido') ||
-                e.message.includes('mayor a 0');
-                 e.message.includes('turno de caja');
+                e.message.includes('mayor a 0') ||
+                e.message.includes('turno de caja') ||
+                e.message.includes('mismo día');
             res.status(esErrorNegocio ? 400 : 500).json({ error: e.message });
         }
     },

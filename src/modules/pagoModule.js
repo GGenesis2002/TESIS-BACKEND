@@ -265,6 +265,28 @@ const pagoModule = {
                 );
             }
 
+            // 1.b Política de negocio: solo se puede reembolsar el mismo día en que
+            //     se realizó el pago. Antes esto solo se validaba en el frontend,
+            //     lo que permitía saltarla llamando al endpoint directamente.
+            const fechaPagoRes = await client.query(
+                `SELECT MAX(fecha_pago) AS fecha_pago FROM pago WHERE id_orden = $1`,
+                [id_orden]
+            );
+            const fechaPago = fechaPagoRes.rows[0].fecha_pago;
+            if (fechaPago) {
+                const hoy = new Date();
+                const fp = new Date(fechaPago);
+                const esMismoDia =
+                    fp.getFullYear() === hoy.getFullYear() &&
+                    fp.getMonth() === hoy.getMonth() &&
+                    fp.getDate() === hoy.getDate();
+                if (!esMismoDia) {
+                    throw new Error(
+                        `Solo se pueden reembolsar pagos realizados el mismo día de hoy (esta orden se pagó el ${fp.toLocaleDateString('es-EC')}).`
+                    );
+                }
+            }
+
             // 2. Validaciones básicas
             const metodosValidos = ['Efectivo', 'Transferencia'];
             if (!metodosValidos.includes(metodo_reembolso)) {

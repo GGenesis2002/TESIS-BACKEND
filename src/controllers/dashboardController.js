@@ -27,7 +27,7 @@ const dashboardController = {
                         -
                         (SELECT COALESCE(SUM(monto),0) FROM reembolso WHERE fecha_reembolso::date = $1)
                     )                                                                                              AS ingresos_hoy,
-                    (SELECT COUNT(*) FROM insumos WHERE stock_actual <= stock_minimo)                                AS stock_bajo
+                    (SELECT COUNT(*) FROM insumos WHERE stock_actual <= stock_minimo AND estado = TRUE)              AS stock_bajo
             `;
             const stats            = await pool.query(query, [hoy]);
             const ordenesRecientes = await pool.query(

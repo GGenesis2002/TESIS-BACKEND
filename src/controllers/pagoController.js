@@ -130,21 +130,28 @@ const pagoController = {
 
     // POST /pagos/reembolsar
     //
-    // Body esperado:
+    // Body esperado (reembolso mixto, patrón igual al de /pagos/procesar):
     // {
     //   id_orden: number,
-    //   monto: number,
-    //   metodo_reembolso: "Efectivo" | "Transferencia",
-    //   referencia?: string,   // obligatoria si metodo_reembolso es Transferencia
+    //   reembolsos: [
+    //     { monto: number, metodo_reembolso: "Efectivo" | "Transferencia", referencia?: string },
+    //     // segunda parte opcional para reembolso mixto:
+    //     { monto: number, metodo_reembolso: "Efectivo" | "Transferencia", referencia?: string }
+    //   ],
     //   motivo: string
     // }
     //
+    // Compatibilidad hacia atrás: si el cliente envía { id_orden, monto, metodo_reembolso, referencia, motivo }
+    // (forma antigua) se normaliza automáticamente a la nueva estructura.
+    //
     // Solo se pueden reembolsar órdenes en estado 'Pagada'. Si el monto
     // reembolsado cubre el 100% de lo pagado, la orden pasa a 'Cancelada'.
-    // Se admite reembolso parcial (monto menor a lo pagado).
+    // Se admite reembolso parcial (monto menor a lo pagado). Cada parte del
+    // reembolso además se valida contra el efectivo/transferencia realmente
+    // disponible en el turno de caja activo.
     procesarReembolso: async (req, res) => {
         try {
-            const { id_orden, monto, metodo_reembolso, referencia, motivo } = req.body;
+            const { id_orden, reembolsos, monto, metodo_reembolso, referencia, motivo } = req.body;
 
             if (!id_orden) {
                 return res.status(400).json({ error: 'id_orden es obligatorio.' });
@@ -165,11 +172,19 @@ const pagoController = {
             const resultado = await pagoModule.registrarReembolso({
                 id_orden: parseInt(id_orden),
                 id_secretaria,
+                reembolsos,
                 monto,
                 metodo_reembolso,
                 referencia,
                 motivo,
             });
+
+            const resumenMetodos = resultado.reembolsos
+                .map(r => {
+                    const ref = r.referencia ? ` (REF: ${r.referencia})` : '';
+                    return `${r.metodo_reembolso}${ref}: $${parseFloat(r.monto).toFixed(2)}`;
+                })
+                .join(' — ');
 
             // ── Notificación al paciente ─────────────────────────────────────
             try {
@@ -190,7 +205,7 @@ const pagoController = {
                     );
                     await notificacionModule.crear(
                         id_usuario_paciente,
-                        `↩️ Se registró un reembolso de $${parseFloat(resultado.reembolso.monto).toFixed(2)} (${resultado.reembolso.metodo_reembolso}) para tu orden #${id_orden}.`,
+                        `↩️ Se registró un reembolso de $${resultado.total.toFixed(2)} para tu orden #${id_orden}. ${resumenMetodos}.`,
                         rolPac.rows[0]?.id_usuario_rol || null
                     );
                 }
@@ -204,14 +219,16 @@ const pagoController = {
                 req.user.id,
                 req.user.id_usuario_rol,
                 'REGISTRO_REEMBOLSO',
-                `Reembolso de $${parseFloat(resultado.reembolso.monto).toFixed(2)} (${resultado.reembolso.metodo_reembolso}) registrado para orden #${id_orden} — Motivo: ${motivo}`
+                `Reembolso de $${resultado.total.toFixed(2)} registrado para orden #${id_orden} — ${resumenMetodos} — Motivo: ${motivo}`
             );
 
             res.status(201).json({
                 msg: resultado.ordenCancelada
                     ? 'Reembolso procesado con éxito. La orden fue cancelada.'
                     : 'Reembolso parcial procesado con éxito. La orden sigue como PAGADA.',
-                reembolso: resultado.reembolso,
+                reembolsos: resultado.reembolsos,
+                total: resultado.total,
+                esMixto: resultado.esMixto,
                 ordenCancelada: resultado.ordenCancelada,
                 disponibleRestante: resultado.disponibleRestante,
             });
@@ -225,7 +242,11 @@ const pagoController = {
                 e.message.includes('inválido') ||
                 e.message.includes('mayor a 0') ||
                 e.message.includes('turno de caja') ||
-                e.message.includes('mismo día');
+                e.message.includes('mismo día') ||
+                e.message.includes('suficiente') ||
+                e.message.includes('diferentes') ||
+                e.message.includes('máximo 2') ||
+                e.message.includes('al menos una parte');
             res.status(esErrorNegocio ? 400 : 500).json({ error: e.message });
         }
     },

@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const cajaModule = require('./cajaModule');
 
 const pagoModule = {
 
@@ -227,27 +228,43 @@ const pagoModule = {
 
     /**
      * Registra el reembolso (total o parcial) de una orden ya pagada.
+     * Soporta reembolso simple (un método) o mixto (efectivo + transferencia),
+     * con el mismo patrón que registrarPago.
      *
      * Reglas de negocio:
      * - Solo se puede reembolsar una orden en estado 'Pagada' (antes de que
      *   se tome la muestra), para no chocar con el trigger que descuenta
      *   inventario al pasar a 'En Proceso'.
-     * - El monto reembolsado no puede superar lo efectivamente pagado menos
-     *   lo ya reembolsado previamente (permite reembolsos parciales).
+     * - El monto total reembolsado no puede superar lo efectivamente pagado
+     *   menos lo ya reembolsado previamente (permite reembolsos parciales).
+     * - Cada parte del reembolso, además, no puede superar lo que realmente
+     *   hay disponible en ESA forma de pago dentro del turno de caja activo
+     *   (no se puede devolver en efectivo más de lo que hay en efectivo en
+     *   caja, ni por transferencia más de lo neto cobrado por transferencia
+     *   en el turno). Antes esto no se validaba y permitía dejar la caja en
+     *   negativo.
      * - Si el reembolso cubre el 100% de lo pagado, la orden pasa a 'Cancelada'.
-     * - Queda vinculado al turno de caja abierto de la secretaria (si tiene uno),
-     *   para que aparezca reflejado en el cierre correspondiente.
+     * - Queda vinculado al turno de caja abierto de la secretaria.
      *
      * @param {Object} datos
      * @param {number} datos.id_orden
      * @param {number} datos.id_secretaria
-     * @param {number} datos.monto
-     * @param {string} datos.metodo_reembolso — "Efectivo" | "Transferencia"
-     * @param {string} [datos.referencia]     — obligatoria si es Transferencia
+     * @param {Array}  [datos.reembolsos] — [{ monto, metodo_reembolso, referencia? }, ...] (máx. 2, métodos distintos)
+     * @param {number} [datos.monto]            — forma antigua (reembolso simple)
+     * @param {string} [datos.metodo_reembolso] — forma antigua (reembolso simple)
+     * @param {string} [datos.referencia]       — forma antigua (reembolso simple)
      * @param {string} datos.motivo
      */
     registrarReembolso: async (datos) => {
-        const { id_orden, id_secretaria, monto, metodo_reembolso, referencia, motivo } = datos;
+        const { id_orden, id_secretaria, motivo } = datos;
+        let { reembolsos, monto, metodo_reembolso, referencia } = datos;
+
+        // Compatibilidad hacia atrás: si el cliente envía la forma antigua
+        // { monto, metodo_reembolso, referencia } se normaliza a un arreglo.
+        if (!reembolsos && monto && metodo_reembolso) {
+            reembolsos = [{ monto: parseFloat(monto), metodo_reembolso, referencia }];
+        }
+
         const client = await pool.connect();
 
         try {
@@ -289,22 +306,40 @@ const pagoModule = {
                 }
             }
 
-            // 2. Validaciones básicas
-            const metodosValidos = ['Efectivo', 'Transferencia'];
-            if (!metodosValidos.includes(metodo_reembolso)) {
-                throw new Error(`Método de reembolso inválido: ${metodo_reembolso}. Use Efectivo o Transferencia.`);
-            }
-            if (!monto || parseFloat(monto) <= 0) {
-                throw new Error('El monto del reembolso debe ser mayor a 0.');
-            }
+            // 2. Validar motivo (obligatorio, aplica a toda la operación aunque sea mixta)
             if (!motivo || motivo.trim() === '') {
                 throw new Error('El motivo del reembolso es obligatorio.');
             }
-            if (metodo_reembolso === 'Transferencia' && (!referencia || referencia.trim() === '')) {
-                throw new Error('El número de referencia es obligatorio para reembolsos por Transferencia.');
+
+            // 3. Validar el arreglo de partes del reembolso
+            if (!Array.isArray(reembolsos) || reembolsos.length === 0) {
+                throw new Error('Debe indicar al menos una parte de reembolso.');
+            }
+            if (reembolsos.length > 2) {
+                throw new Error('Se permiten máximo 2 métodos de reembolso (Efectivo y Transferencia).');
             }
 
-            // 3. Verificar que no se reembolse más de lo disponible (pagado - ya reembolsado)
+            const metodosValidos = ['Efectivo', 'Transferencia'];
+            for (const r of reembolsos) {
+                if (!metodosValidos.includes(r.metodo_reembolso)) {
+                    throw new Error(`Método de reembolso inválido: ${r.metodo_reembolso}. Use Efectivo o Transferencia.`);
+                }
+                if (!r.monto || parseFloat(r.monto) <= 0) {
+                    throw new Error(`El monto para ${r.metodo_reembolso} debe ser mayor a 0.`);
+                }
+                if (r.metodo_reembolso === 'Transferencia' && (!r.referencia || r.referencia.trim() === '')) {
+                    throw new Error('El número de referencia es obligatorio para reembolsos por Transferencia.');
+                }
+            }
+            if (reembolsos.length === 2) {
+                const metodos = reembolsos.map(r => r.metodo_reembolso);
+                if (metodos[0] === metodos[1]) {
+                    throw new Error('En un reembolso mixto los dos métodos deben ser diferentes.');
+                }
+            }
+
+            // 4. Verificar que no se reembolse más de lo disponible para ESTA orden
+            //    (pagado - ya reembolsado)
             const pagadoRes = await client.query(
                 `SELECT COALESCE(SUM(monto), 0) AS total_pagado FROM pago WHERE id_orden = $1`,
                 [id_orden]
@@ -317,14 +352,14 @@ const pagoModule = {
             const totalReembolsado = parseFloat(reembolsadoRes.rows[0].total_reembolsado);
             const disponibleParaReembolso = totalPagado - totalReembolsado;
 
-            const montoReembolso = parseFloat(monto);
-            if (montoReembolso > disponibleParaReembolso + 0.01) {
+            const montoTotalReembolso = reembolsos.reduce((s, r) => s + parseFloat(r.monto), 0);
+            if (montoTotalReembolso > disponibleParaReembolso + 0.01) {
                 throw new Error(
-                    `El monto a reembolsar ($${montoReembolso.toFixed(2)}) supera lo disponible para reembolso ($${disponibleParaReembolso.toFixed(2)}).`
+                    `El monto a reembolsar ($${montoTotalReembolso.toFixed(2)}) supera lo disponible para reembolso de esta orden ($${disponibleParaReembolso.toFixed(2)}).`
                 );
             }
 
-            // 4. Exigir turno de caja abierto (igual que en registrarPago).
+            // 5. Exigir turno de caja abierto (igual que en registrarPago).
             const turnoRes = await client.query(
                 `SELECT id_cierre FROM cierre_caja WHERE id_secretaria = $1 AND estado = 'ABIERTO'`,
                 [id_secretaria]
@@ -334,17 +369,43 @@ const pagoModule = {
             }
             const id_cierre = turnoRes.rows[0].id_cierre;
 
-            // 5. Insertar el reembolso
-            const referenciaGuardada = referencia ? referencia.trim().toUpperCase() : null;
-            const insertRes = await client.query(
-                `INSERT INTO reembolso (id_orden, id_secretaria, id_cierre, monto, metodo_reembolso, referencia, motivo)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 RETURNING *`,
-                [id_orden, id_secretaria, id_cierre, montoReembolso, metodo_reembolso, referenciaGuardada, motivo.trim()]
-            );
+            // 6. Verificar que cada parte del reembolso no supere lo que REALMENTE
+            //    hay disponible en esa forma de pago dentro del turno de caja.
+            //    Esto evita, por ejemplo, reembolsar $50 en efectivo cuando la
+            //    caja del turno solo tiene $25 netos en efectivo.
+            const resumenTurno = await cajaModule._resumenTurno(id_cierre);
+            const disponibleEfectivoTurno = resumenTurno.total_efectivo_sistema - resumenTurno.total_reembolsos_efectivo;
+            const disponibleTransferenciaTurno = resumenTurno.total_transferencia_sistema - resumenTurno.total_reembolsos_transferencia;
 
-            // 6. Si el reembolso cubre lo disponible, la orden pasa a 'Cancelada'
-            const disponibleRestante = Math.max(0, disponibleParaReembolso - montoReembolso);
+            for (const r of reembolsos) {
+                const montoR = parseFloat(r.monto);
+                if (r.metodo_reembolso === 'Efectivo' && montoR > disponibleEfectivoTurno + 0.01) {
+                    throw new Error(
+                        `No hay suficiente efectivo en caja para este reembolso: se pidió $${montoR.toFixed(2)} pero solo hay $${disponibleEfectivoTurno.toFixed(2)} disponibles en efectivo en el turno actual.`
+                    );
+                }
+                if (r.metodo_reembolso === 'Transferencia' && montoR > disponibleTransferenciaTurno + 0.01) {
+                    throw new Error(
+                        `No hay suficiente saldo por transferencia en caja para este reembolso: se pidió $${montoR.toFixed(2)} pero solo hay $${disponibleTransferenciaTurno.toFixed(2)} disponibles por transferencia en el turno actual.`
+                    );
+                }
+            }
+
+            // 7. Insertar una fila en `reembolso` por cada parte
+            const reembolsosInsertados = [];
+            for (const r of reembolsos) {
+                const referenciaGuardada = r.referencia ? r.referencia.trim().toUpperCase() : null;
+                const insertRes = await client.query(
+                    `INSERT INTO reembolso (id_orden, id_secretaria, id_cierre, monto, metodo_reembolso, referencia, motivo)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     RETURNING *`,
+                    [id_orden, id_secretaria, id_cierre, parseFloat(r.monto), r.metodo_reembolso, referenciaGuardada, motivo.trim()]
+                );
+                reembolsosInsertados.push(insertRes.rows[0]);
+            }
+
+            // 8. Si el reembolso cubre lo disponible de la orden, pasa a 'Cancelada'
+            const disponibleRestante = Math.max(0, disponibleParaReembolso - montoTotalReembolso);
             let ordenCancelada = false;
             if (disponibleRestante <= 0.01) {
                 await client.query(`UPDATE orden_medica SET estado = 'Cancelada' WHERE id_orden = $1`, [id_orden]);
@@ -354,7 +415,9 @@ const pagoModule = {
             await client.query('COMMIT');
 
             return {
-                reembolso: insertRes.rows[0],
+                reembolsos: reembolsosInsertados,
+                total: montoTotalReembolso,
+                esMixto: reembolsos.length > 1,
                 ordenCancelada,
                 disponibleRestante,
             };

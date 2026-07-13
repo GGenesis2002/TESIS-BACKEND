@@ -45,6 +45,20 @@ router.get('/arqueo-hoy', verifyToken, dashboardController.getArqueoCajaHoy);
  */
 router.get('/arqueo-por-usuario', verifyToken, dashboardController.getArqueoPorUsuario);
 
+/**
+ * @route   GET /api/dashboard/cierres-caja
+ * @desc    Arqueo de caja profundo: listado turno por turno (cierre_caja) con
+ *          filtro de fecha (?desde=&hasta=) y búsqueda por cajero (?q=),
+ *          incluye resumen de descuadres, tendencia de diferencias y ranking por cajero
+ */
+router.get('/cierres-caja', verifyToken, dashboardController.getCierresCaja);
+
+/**
+ * @route   GET /api/dashboard/cierres-caja/:id
+ * @desc    Detalle imprimible de un cierre puntual: cabecera + pagos + reembolsos del turno
+ */
+router.get('/cierres-caja/:id', verifyToken, dashboardController.getDetalleCierreCaja);
+
 
 // ─── ENDPOINTS DE DRILL-DOWN (DETALLES DEL DASHBOARD) ────────────────────────
 
@@ -91,7 +105,5 @@ router.get('/resultados-criticos', verifyToken, dashboardController.getResultado
  * @desc    Lista de usuarios que iniciaron sesión hoy
  */
 router.get('/usuarios-activos-hoy', verifyToken, dashboardController.getUsuariosActivosHoy);
-
-module.exports = router;
 
 module.exports = router;

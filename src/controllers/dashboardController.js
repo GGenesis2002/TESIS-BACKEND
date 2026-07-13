@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const cajaModule = require('../modules/cajaModule');
 
 const dashboardController = {
 
@@ -686,6 +687,223 @@ getResultadosCriticos: async (req, res) => {
     } catch (e) {
         console.error('Error en getResultadosCriticos:', e);
         res.status(500).json({ error: e.message });
+    }
+},
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ARQUEO DE CAJA — LISTADO DETALLADO DE CIERRES (drill-down por turno)
+// GET /dashboard/cierres-caja?desde=&hasta=&q=
+//
+// A diferencia de getArqueoCajaHoy (que agrega pago/reembolso por rango de
+// fecha sin importar el turno), este endpoint consulta cierre_caja turno por
+// turno: quién abrió/cerró, fondo inicial, cobrado, reembolsado, efectivo
+// esperado vs contado y la diferencia. Incluye turnos ABIERTOS (con totales
+// calculados en vivo) y CERRADOS (con los totales persistidos al cierre).
+//
+// Además arma 3 bloques de análisis para la parte de tesis:
+//   - resumen:        conteos y montos globales, y descuadres (faltante/sobrante)
+//   - tendencia:      serie de diferencias por cierre, ordenada por fecha (para gráfico)
+//   - rankingCajeros:  por secretaria, precisión de cierre y monto gestionado
+// ─────────────────────────────────────────────────────────────────────────────
+getCierresCaja: async (req, res) => {
+    try {
+        const hoyISO = new Date().toISOString().split('T')[0];
+        const desde  = req.query.desde || hoyISO;
+        const hasta  = req.query.hasta || hoyISO;
+        const q      = (req.query.q || '').trim() || null;
+
+        const query = `
+            SELECT
+                cc.id_cierre,
+                cc.id_secretaria,
+                cc.fecha_apertura,
+                cc.fecha_cierre,
+                cc.estado,
+                cc.monto_inicial,
+                cc.efectivo_contado,
+                cc.diferencia,
+                cc.observaciones,
+                u.nombres,
+                u.apellidos,
+                u.username,
+                COALESCE(p.efectivo, 0)       AS pago_efectivo,
+                COALESCE(p.transferencia, 0)  AS pago_transferencia,
+                COALESCE(p.num_pagos, 0)      AS num_pagos,
+                COALESCE(r.efectivo, 0)       AS reembolso_efectivo,
+                COALESCE(r.transferencia, 0)  AS reembolso_transferencia,
+                COALESCE(r.num_reembolsos, 0) AS num_reembolsos
+            FROM cierre_caja cc
+            JOIN asistente_analista aa ON cc.id_secretaria = aa.id_secretaria
+            JOIN usuario u             ON aa.id_usuario    = u.id_usuario
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS transferencia,
+                    COUNT(*)                                                                  AS num_pagos
+                FROM pago WHERE pago.id_cierre = cc.id_cierre
+            ) p ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Efectivo'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS transferencia,
+                    COUNT(*)                                                                   AS num_reembolsos
+                FROM reembolso WHERE reembolso.id_cierre = cc.id_cierre
+            ) r ON TRUE
+            WHERE cc.fecha_apertura::date BETWEEN $1 AND $2
+              AND (
+                    $3::text IS NULL
+                    OR u.nombres   ILIKE '%' || $3 || '%'
+                    OR u.apellidos ILIKE '%' || $3 || '%'
+                    OR u.username  ILIKE '%' || $3 || '%'
+                    OR CAST(cc.id_cierre AS TEXT) = $3
+                  )
+            ORDER BY cc.fecha_apertura DESC
+        `;
+
+        const { rows } = await pool.query(query, [desde, hasta, q]);
+
+        const TOLERANCIA = 0.01; // diferencias de hasta 1 centavo se consideran "cuadradas"
+
+        let totalCobradoEfectivo = 0, totalCobradoTransferencia = 0;
+        let totalReembolsadoEfectivo = 0, totalReembolsadoTransferencia = 0;
+        let cerrados = 0, cuadrados = 0, conDescuadre = 0;
+        let faltanteMonto = 0, faltanteCount = 0, sobranteMonto = 0, sobranteCount = 0;
+        const tendencia = [];
+        const porCajero = {};
+
+        const cierres = rows.map(row => {
+            const montoInicial       = parseFloat(row.monto_inicial);
+            const pagoEfectivo       = parseFloat(row.pago_efectivo);
+            const pagoTransferencia  = parseFloat(row.pago_transferencia);
+            const reembEfectivo      = parseFloat(row.reembolso_efectivo);
+            const reembTransferencia = parseFloat(row.reembolso_transferencia);
+            // Efectivo esperado calculado en vivo (consistente para ABIERTO y CERRADO,
+            // en vez de depender únicamente de la columna persistida)
+            const efectivoEsperado   = montoInicial + pagoEfectivo - reembEfectivo;
+
+            const cerrado          = row.estado === 'CERRADO';
+            const efectivoContado  = cerrado && row.efectivo_contado !== null ? parseFloat(row.efectivo_contado) : null;
+            const diferencia       = cerrado && row.diferencia !== null ? parseFloat(row.diferencia) : null;
+
+            let duracionMin = null;
+            if (row.fecha_cierre) {
+                duracionMin = Math.round((new Date(row.fecha_cierre) - new Date(row.fecha_apertura)) / 60000);
+            }
+
+            totalCobradoEfectivo          += pagoEfectivo;
+            totalCobradoTransferencia     += pagoTransferencia;
+            totalReembolsadoEfectivo      += reembEfectivo;
+            totalReembolsadoTransferencia += reembTransferencia;
+
+            const cajeroNombre = `${row.nombres} ${row.apellidos}`.trim();
+            if (!porCajero[row.id_secretaria]) {
+                porCajero[row.id_secretaria] = {
+                    id_secretaria: row.id_secretaria,
+                    cajero: cajeroNombre,
+                    username: row.username,
+                    total_cierres: 0,
+                    cerrados: 0,
+                    cuadrados: 0,
+                    con_descuadre: 0,
+                    monto_gestionado: 0,
+                    suma_diferencias: 0,
+                };
+            }
+            const cajeroStat = porCajero[row.id_secretaria];
+            cajeroStat.total_cierres += 1;
+            cajeroStat.monto_gestionado += pagoEfectivo + pagoTransferencia;
+
+            if (cerrado) {
+                cerrados += 1;
+                cajeroStat.cerrados += 1;
+                if (diferencia !== null) {
+                    cajeroStat.suma_diferencias += diferencia;
+                    if (Math.abs(diferencia) <= TOLERANCIA) {
+                        cuadrados += 1;
+                        cajeroStat.cuadrados += 1;
+                    } else {
+                        conDescuadre += 1;
+                        cajeroStat.con_descuadre += 1;
+                        if (diferencia < 0) { faltanteMonto += Math.abs(diferencia); faltanteCount += 1; }
+                        else                { sobranteMonto += diferencia; sobranteCount += 1; }
+                    }
+                    tendencia.push({
+                        id_cierre: row.id_cierre,
+                        fecha: row.fecha_cierre,
+                        cajero: cajeroNombre,
+                        diferencia,
+                    });
+                }
+            }
+
+            return {
+                id_cierre: row.id_cierre,
+                id_secretaria: row.id_secretaria,
+                cajero: cajeroNombre,
+                username: row.username,
+                fecha_apertura: row.fecha_apertura,
+                fecha_cierre: row.fecha_cierre,
+                estado: row.estado,
+                duracion_minutos: duracionMin,
+                monto_inicial: montoInicial,
+                cobrado_efectivo: pagoEfectivo,
+                cobrado_transferencia: pagoTransferencia,
+                num_pagos: parseInt(row.num_pagos, 10),
+                reembolsado_efectivo: reembEfectivo,
+                reembolsado_transferencia: reembTransferencia,
+                num_reembolsos: parseInt(row.num_reembolsos, 10),
+                efectivo_esperado: parseFloat(efectivoEsperado.toFixed(2)),
+                efectivo_contado: efectivoContado,
+                diferencia,
+                observaciones: row.observaciones,
+            };
+        });
+
+        const rankingCajeros = Object.values(porCajero)
+            .map(c => ({
+                ...c,
+                monto_gestionado: parseFloat(c.monto_gestionado.toFixed(2)),
+                diferencia_promedio: c.cerrados > 0 ? parseFloat((c.suma_diferencias / c.cerrados).toFixed(2)) : null,
+                precision_pct: c.cerrados > 0 ? parseFloat(((c.cuadrados / c.cerrados) * 100).toFixed(1)) : null,
+            }))
+            .sort((a, b) => b.monto_gestionado - a.monto_gestionado);
+
+        res.json({
+            cierres,
+            resumen: {
+                total_cierres:                   cierres.length,
+                cierres_abiertos:                 cierres.length - cerrados,
+                cierres_cerrados:                 cerrados,
+                total_cobrado_efectivo:           parseFloat(totalCobradoEfectivo.toFixed(2)),
+                total_cobrado_transferencia:      parseFloat(totalCobradoTransferencia.toFixed(2)),
+                total_reembolsado_efectivo:       parseFloat(totalReembolsadoEfectivo.toFixed(2)),
+                total_reembolsado_transferencia:  parseFloat(totalReembolsadoTransferencia.toFixed(2)),
+                cierres_cuadrados:                cuadrados,
+                cierres_con_descuadre:            conDescuadre,
+                descuadres_faltante: { count: faltanteCount, monto: parseFloat(faltanteMonto.toFixed(2)) },
+                descuadres_sobrante: { count: sobranteCount, monto: parseFloat(sobranteMonto.toFixed(2)) },
+            },
+            tendencia: tendencia.sort((a, b) => new Date(a.fecha) - new Date(b.fecha)),
+            rankingCajeros,
+        });
+    } catch (e) {
+        console.error('Error en getCierresCaja:', e);
+        res.status(500).json({ error: 'Error interno al obtener el arqueo detallado de cierres de caja.' });
+    }
+},
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /dashboard/cierres-caja/:id
+// Drill-down de un cierre puntual: cabecera + lista de pagos + lista de
+// reembolsos de ese turno (reutiliza cajaModule, misma fuente que usa la
+// secretaria al cerrar su turno, para que los números siempre coincidan).
+// ─────────────────────────────────────────────────────────────────────────────
+getDetalleCierreCaja: async (req, res) => {
+    try {
+        const detalle = await cajaModule.obtenerDetalleCierre(parseInt(req.params.id));
+        res.json(detalle);
+    } catch (e) {
+        res.status(e.message.includes('no existe') ? 404 : 500).json({ error: e.message });
     }
 },
 

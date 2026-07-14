@@ -196,34 +196,48 @@ const dashboardController = {
     //    consume Admindashboard.jsx.
 getArqueoCajaHoy: async (req, res) => {
     try {
-        const hoyISO = getHoyLocal();
+        const hoyISO = getHoyLocal(); // Función que ya tienes para fecha local
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
-        // 1. DETERMINAR PERMISOS: 
-        // Si el usuario es Administrador (Rol 1), id_secretaria debe ser NULL para ver todo.
-        // Solo buscamos id_secretaria si NO es administrador.
-        
-        let id_secretaria_filtro = null;
-        
-        // Asumimos que req.user.id_rol viene del middleware de autenticación
-        // Si no tienes id_rol en el token, lo buscamos por base de datos:
-        const rolRes = await pool.query(
-            `SELECT id_rol FROM usuario_rol WHERE id_usuario = $1 AND activo = TRUE AND id_rol = 1`,
+        // 1. OBTENER ROL DEL USUARIO
+        // Buscamos el rol activo del usuario que hace la petición
+        const userRolRes = await pool.query(
+            `SELECT r.nombre 
+             FROM usuario_rol ur 
+             JOIN rol r ON ur.id_rol = r.id_rol 
+             WHERE ur.id_usuario = $1 AND ur.activo = TRUE 
+             LIMIT 1`,
             [req.user.id]
         );
-        const esAdmin = rolRes.rows.length > 0;
 
-        if (!esAdmin) {
+        const nombreRol = userRolRes.rows[0]?.nombre;
+        let id_secretaria_filtro = null;
+
+        // 2. APLICAR LÓGICA DE FILTRO
+        if (nombreRol === 'Administrador') {
+            // Si es Admin, el filtro se queda en NULL para que la consulta traiga TODO
+            id_secretaria_filtro = null;
+        } else {
+            // Si es Asistente (o cualquier otro), buscamos su ID de secretaria
             const secRes = await pool.query(
                 `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
                 [req.user.id]
             );
-            id_secretaria_filtro = secRes.rows.length > 0 ? secRes.rows[0].id_secretaria : null;
+            
+            if (secRes.rows.length > 0) {
+                id_secretaria_filtro = secRes.rows[0].id_secretaria;
+            } else {
+                // Si no es admin y no tiene perfil de secretaria, 
+                // forzamos un ID que no exista (-1) para que devuelva 0
+                id_secretaria_filtro = -1;
+            }
         }
 
-        // 2. CONSULTA DE TOTALES
-        // Simplificamos el manejo de fechas para evitar desfases de horas
+        // 3. CONSULTA SQL
+        // La magia está en: ($3::int IS NULL OR t.id_secretaria = $3)
+        // Si $3 es NULL (Admin), la condición siempre es verdadera y trae todo.
+        // Si $3 tiene un ID (Asistente), filtra solo sus registros.
         const queryTotales = `
             SELECT
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) -
@@ -245,24 +259,21 @@ getArqueoCajaHoy: async (req, res) => {
               AND ($3::int IS NULL OR t.id_secretaria = $3)
         `;
 
-        const [resTotales] = await Promise.all([
-            pool.query(queryTotales, [desde, hasta, id_secretaria_filtro])
-        ]);
-
+        const resTotales = await pool.query(queryTotales, [desde, hasta, id_secretaria_filtro]);
         const totales = resTotales.rows[0];
 
         res.json({
-            efectivo: parseFloat(totales.efectivo || 0),
-            transferencia: parseFloat(totales.transferencia || 0),
-            efectivo_cobrado: parseFloat(totales.efectivo_cobrado || 0),
-            reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo || 0),
-            transferencia_cobrada: parseFloat(totales.transferencia_cobrada || 0),
-            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia || 0)
+            efectivo: parseFloat(totales.efectivo),
+            transferencia: parseFloat(totales.transferencia),
+            efectivo_cobrado: parseFloat(totales.efectivo_cobrado),
+            reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo),
+            transferencia_cobrada: parseFloat(totales.transferencia_cobrada),
+            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia)
         });
 
     } catch (e) {
         console.error("Error en getArqueoCajaHoy:", e);
-        res.status(500).json({ error: "Error interno al calcular el arqueo." });
+        res.status(500).json({ error: "Fallo al calcular el arqueo de caja." });
     }
 },
 

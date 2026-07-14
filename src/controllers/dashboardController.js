@@ -1,12 +1,28 @@
 const pool = require('../config/db');
 const cajaModule = require('../modules/cajaModule');
 
+// ─── HELPER: FECHA "HOY" EN ZONA HORARIA DE ECUADOR ─────────────────────────
+// new Date().toISOString() siempre devuelve la fecha en UTC. Ecuador es
+// GMT-5, así que entre las 19:00 y las 23:59 (hora local) toISOString() ya
+// devuelve la fecha del día siguiente, haciendo que los filtros "de hoy"
+// (arqueo de caja, KPIs, etc.) busquen una fecha sin datos todavía y
+// muestren $0.00 aunque sí haya movimientos. Esta función calcula "hoy"
+// directamente en America/Guayaquil, sin pasar por UTC.
+function getHoyLocal() {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Guayaquil',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).format(new Date());
+}
+
 const dashboardController = {
 
     // ─── DASHBOARD ADMINISTRADOR ────────────────────────────────────────────
     getAdminStats: async (req, res) => {
         try {
-            const hoy = new Date().toISOString().split('T')[0];
+            const hoy = getHoyLocal();
             const query = `
                 SELECT
                     (SELECT COUNT(*) FROM paciente)                                                                  AS pac_hoy,
@@ -43,7 +59,7 @@ const dashboardController = {
     // ─── DASHBOARD SECRETARÍA / ASISTENTE ANALISTA ──────────────────────────
     getAsistenAnalistaStats: async (req, res) => {
         try {
-            const hoy = new Date().toISOString().split('T')[0];
+            const hoy = getHoyLocal();
             
             const queryKpis = `
                 SELECT
@@ -180,7 +196,7 @@ const dashboardController = {
     //    consume Admindashboard.jsx.
 getArqueoCajaHoy: async (req, res) => {
     try {
-        const hoyISO = new Date().toISOString().split('T')[0];
+        const hoyISO = getHoyLocal();
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
@@ -195,8 +211,8 @@ getArqueoCajaHoy: async (req, res) => {
         const queryTotales = `
             WITH pagos AS (
                 SELECT
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS efectivo,
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS transferencia
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Efectivo%'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Transferencia%'), 0) AS transferencia
                 FROM pago
                 WHERE fecha_pago::date BETWEEN $1 AND $2
                   AND ($3::int IS NULL OR id_secretaria = $3)
@@ -232,8 +248,8 @@ getArqueoCajaHoy: async (req, res) => {
                     CONCAT(u.nombres, ' ', u.apellidos)              AS usuario,
                     'cobro'                                          AS tipo,
                     CASE
-                        WHEN pa.metodo_pago LIKE 'Efectivo%'      THEN 'Efectivo'
-                        WHEN pa.metodo_pago LIKE 'Transferencia%' THEN 'Transferencia'
+                        WHEN pa.metodo_pago ILIKE 'Efectivo%'      THEN 'Efectivo'
+                        WHEN pa.metodo_pago ILIKE 'Transferencia%' THEN 'Transferencia'
                         ELSE pa.metodo_pago
                     END                                              AS metodo,
                     pa.monto                                         AS monto,
@@ -288,7 +304,7 @@ getArqueoCajaHoy: async (req, res) => {
     // ─── DRILL-DOWN: ARQUEO DEL DÍA DESGLOSADO POR USUARIO ──────────────────
     getArqueoPorUsuario: async (req, res) => {
         try {
-            const hoyISO = new Date().toISOString().split('T')[0];
+            const hoyISO = getHoyLocal();
             const desde  = req.query.desde || hoyISO;
             const hasta  = req.query.hasta || hoyISO;
 
@@ -296,8 +312,8 @@ getArqueoCajaHoy: async (req, res) => {
                 WITH cobros AS (
                     SELECT
                         id_secretaria,
-                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS cobrado_efectivo,
-                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS cobrado_transferencia
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Efectivo%'), 0)      AS cobrado_efectivo,
+                        COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Transferencia%'), 0) AS cobrado_transferencia
                     FROM pago
                     WHERE fecha_pago::date BETWEEN $1 AND $2
                     GROUP BY id_secretaria
@@ -440,7 +456,7 @@ getArqueoCajaHoy: async (req, res) => {
     // ─── DASHBOARD TÉCNICO ──────────────────────────────────────────────────
     getTecnicoStats: async (req, res) => {
         try {
-            const hoy = new Date().toISOString().split('T')[0];
+            const hoy = getHoyLocal();
 
             const queryKpis = `
                 SELECT
@@ -511,7 +527,7 @@ getArqueoCajaHoy: async (req, res) => {
 // GET /dashboard/ordenes-por-usuario
 getOrdenesPorUsuario: async (req, res) => {
     try {
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = getHoyLocal();
 
         const result = await pool.query(`
             SELECT
@@ -577,7 +593,7 @@ getOrdenesPorUsuario: async (req, res) => {
 // GET /dashboard/ingresos-por-usuario?desde=&hasta=
 getIngresosPorUsuario: async (req, res) => {
     try {
-        const hoyISO = new Date().toISOString().split('T')[0];
+        const hoyISO = getHoyLocal();
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
@@ -642,7 +658,7 @@ getIngresosPorUsuario: async (req, res) => {
 // Se agrega aquí como referencia. Mover al archivo correcto.
 getUsuariosActivosHoy: async (req, res) => {
     try {
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = getHoyLocal();
 
         const result = await pool.query(`
             SELECT
@@ -727,7 +743,7 @@ getResultadosCriticos: async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 getCierresCaja: async (req, res) => {
     try {
-        const hoyISO = new Date().toISOString().split('T')[0];
+        const hoyISO = getHoyLocal();
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
         const q      = (req.query.q || '').trim() || null;
@@ -757,8 +773,8 @@ getCierresCaja: async (req, res) => {
             JOIN usuario u             ON aa.id_usuario    = u.id_usuario
             LEFT JOIN LATERAL (
                 SELECT
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Efectivo%'), 0)      AS efectivo,
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS transferencia,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Efectivo%'), 0)      AS efectivo,
+                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Transferencia%'), 0) AS transferencia,
                     COUNT(*)                                                                  AS num_pagos
                 FROM pago WHERE pago.id_cierre = cc.id_cierre
             ) p ON TRUE

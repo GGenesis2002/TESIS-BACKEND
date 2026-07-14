@@ -10,7 +10,8 @@ const pagoModule = {
      * @param {Object} datos
      * @param {number} datos.id_orden
      * @param {number} datos.id_secretaria
-     * @param {Array}  datos.pagos  — [{ monto, metodo_pago, referencia? }, ...]
+     * @param {Array}  datos.pagos  — [{ monto, metodo_pago, referencia?, banco?, titular?, cedula_titular? }, ...]
+     *   (referencia, banco, titular y cedula_titular son obligatorios cuando metodo_pago = 'Transferencia')
      *
      * La suma de datos.pagos[].monto debe cubrir el total de la orden.
      * Se permiten máximo 2 partes (Efectivo y Transferencia).
@@ -68,10 +69,21 @@ const pagoModule = {
                 if (!p.monto || parseFloat(p.monto) <= 0) {
                     throw new Error(`El monto para ${p.metodo_pago} debe ser mayor a 0.`);
                 }
-                // Referencia obligatoria para transferencias
+                // Para transferencias se exige, además de la referencia, el banco
+                // y los datos de quien realizó la transferencia (nombre y cédula),
+                // para poder validar el comprobante contra la transferencia real.
                 if (p.metodo_pago === 'Transferencia') {
                     if (!p.referencia || p.referencia.trim() === '') {
                         throw new Error('El número de referencia es obligatorio para pagos por Transferencia.');
+                    }
+                    if (!p.banco || p.banco.trim() === '') {
+                        throw new Error('El banco es obligatorio para pagos por Transferencia.');
+                    }
+                    if (!p.titular || p.titular.trim() === '') {
+                        throw new Error('El nombre de quien realizó la transferencia es obligatorio para pagos por Transferencia.');
+                    }
+                    if (!p.cedula_titular || p.cedula_titular.trim() === '') {
+                        throw new Error('La cédula de quien realizó la transferencia es obligatoria para pagos por Transferencia.');
                     }
                 }
             }
@@ -93,13 +105,15 @@ const pagoModule = {
             }
 
             // 6. Insertar una fila en `pago` por cada parte
-            //    La columna metodo_pago puede almacenar "Transferencia (REF: XXXX)" para tener
-            //    la referencia visible en reportes sin alterar el esquema de la BD.
+            //    La columna metodo_pago puede almacenar
+            //    "Transferencia (REF: XXXX - BANCO: YYYY - TITULAR: ZZZZ - CI: WWWW)"
+            //    para tener toda la info de validación visible en reportes sin
+            //    alterar el esquema de la BD.
             //    Cada fila queda vinculada al turno de caja abierto (id_cierre).
             const pagosInsertados = [];
             for (const p of pagos) {
                 const metodoPagoGuardado = p.metodo_pago === 'Transferencia' && p.referencia
-                    ? `Transferencia (REF: ${p.referencia.trim().toUpperCase()})`
+                    ? `Transferencia (REF: ${p.referencia.trim().toUpperCase()} - BANCO: ${p.banco.trim().toUpperCase()} - TITULAR: ${p.titular.trim().toUpperCase()} - CI: ${p.cedula_titular.trim()})`
                     : p.metodo_pago;
 
                 const res = await client.query(
@@ -249,20 +263,25 @@ const pagoModule = {
      * @param {Object} datos
      * @param {number} datos.id_orden
      * @param {number} datos.id_secretaria
-     * @param {Array}  [datos.reembolsos] — [{ monto, metodo_reembolso, referencia? }, ...] (máx. 2, métodos distintos)
+     * @param {Array}  [datos.reembolsos] — [{ monto, metodo_reembolso, referencia?, banco?, titular?, cedula_titular? }, ...]
+     *   (máx. 2, métodos distintos; referencia/banco/titular/cedula_titular obligatorios si metodo_reembolso = 'Transferencia')
      * @param {number} [datos.monto]            — forma antigua (reembolso simple)
      * @param {string} [datos.metodo_reembolso] — forma antigua (reembolso simple)
      * @param {string} [datos.referencia]       — forma antigua (reembolso simple)
+     * @param {string} [datos.banco]            — forma antigua (reembolso simple)
+     * @param {string} [datos.titular]          — forma antigua (reembolso simple)
+     * @param {string} [datos.cedula_titular]   — forma antigua (reembolso simple)
      * @param {string} datos.motivo
      */
     registrarReembolso: async (datos) => {
         const { id_orden, id_secretaria, motivo } = datos;
-        let { reembolsos, monto, metodo_reembolso, referencia } = datos;
+        let { reembolsos, monto, metodo_reembolso, referencia, banco, titular, cedula_titular } = datos;
 
         // Compatibilidad hacia atrás: si el cliente envía la forma antigua
-        // { monto, metodo_reembolso, referencia } se normaliza a un arreglo.
+        // { monto, metodo_reembolso, referencia, banco, titular, cedula_titular }
+        // se normaliza a un arreglo.
         if (!reembolsos && monto && metodo_reembolso) {
-            reembolsos = [{ monto: parseFloat(monto), metodo_reembolso, referencia }];
+            reembolsos = [{ monto: parseFloat(monto), metodo_reembolso, referencia, banco, titular, cedula_titular }];
         }
 
         const client = await pool.connect();
@@ -327,8 +346,19 @@ const pagoModule = {
                 if (!r.monto || parseFloat(r.monto) <= 0) {
                     throw new Error(`El monto para ${r.metodo_reembolso} debe ser mayor a 0.`);
                 }
-                if (r.metodo_reembolso === 'Transferencia' && (!r.referencia || r.referencia.trim() === '')) {
-                    throw new Error('El número de referencia es obligatorio para reembolsos por Transferencia.');
+                if (r.metodo_reembolso === 'Transferencia') {
+                    if (!r.referencia || r.referencia.trim() === '') {
+                        throw new Error('El número de referencia es obligatorio para reembolsos por Transferencia.');
+                    }
+                    if (!r.banco || r.banco.trim() === '') {
+                        throw new Error('El banco es obligatorio para reembolsos por Transferencia.');
+                    }
+                    if (!r.titular || r.titular.trim() === '') {
+                        throw new Error('El nombre de la persona a quien se transfiere el reembolso es obligatorio para reembolsos por Transferencia.');
+                    }
+                    if (!r.cedula_titular || r.cedula_titular.trim() === '') {
+                        throw new Error('La cédula de la persona a quien se transfiere el reembolso es obligatoria para reembolsos por Transferencia.');
+                    }
                 }
             }
             if (reembolsos.length === 2) {
@@ -394,7 +424,13 @@ const pagoModule = {
             // 7. Insertar una fila en `reembolso` por cada parte
             const reembolsosInsertados = [];
             for (const r of reembolsos) {
-                const referenciaGuardada = r.referencia ? r.referencia.trim().toUpperCase() : null;
+                // La tabla `reembolso` ya tiene una columna `referencia` dedicada.
+                // Para transferencias se guarda ahí también el banco y los datos
+                // de quien recibe el reembolso, para poder validarlo después
+                // (mismo criterio que se aplica en registrarPago).
+                const referenciaGuardada = r.metodo_reembolso === 'Transferencia' && r.referencia
+                    ? `${r.referencia.trim().toUpperCase()} - BANCO: ${r.banco.trim().toUpperCase()} - TITULAR: ${r.titular.trim().toUpperCase()} - CI: ${r.cedula_titular.trim()}`
+                    : (r.referencia ? r.referencia.trim().toUpperCase() : null);
                 const insertRes = await client.query(
                     `INSERT INTO reembolso (id_orden, id_secretaria, id_cierre, monto, metodo_reembolso, referencia, motivo)
                      VALUES ($1, $2, $3, $4, $5, $6, $7)

@@ -11,14 +11,24 @@ const pagoController = {
     // {
     //   id_orden: number,
     //   pagos: [
-    //     { monto: number, metodo_pago: "Efectivo" | "Transferencia", referencia?: string },
-    //     // segunda parte opcional para pago mixto:
-    //     { monto: number, metodo_pago: "Efectivo" | "Transferencia", referencia?: string }
+    //     {
+    //       monto: number,
+    //       metodo_pago: "Efectivo" | "Transferencia",
+    //       // Los siguientes 3 campos son obligatorios SOLO si metodo_pago = "Transferencia":
+    //       referencia?: string,       // número de referencia/comprobante
+    //       banco?: string,            // banco desde el que se hizo la transferencia
+    //       titular?: string,          // nombre de quien realizó la transferencia
+    //       cedula_titular?: string,   // cédula de quien realizó la transferencia
+    //     },
+    //     // segunda parte opcional para pago mixto (mismo formato):
+    //     { monto: number, metodo_pago: "Efectivo" | "Transferencia", referencia?: string, banco?: string, titular?: string, cedula_titular?: string }
     //   ]
     // }
     //
     // Compatibilidad hacia atrás: si el cliente envía { id_orden, monto, metodo_pago }
-    // (forma antigua) se normaliza automáticamente a la nueva estructura.
+    // (forma antigua) se normaliza automáticamente a la nueva estructura. Nota: esta
+    // forma antigua no incluye banco/titular/cedula_titular, por lo que solo debe
+    // usarse para pagos en Efectivo.
     procesarCobro: async (req, res) => {
         try {
             let { id_orden, pagos, monto, metodo_pago } = req.body;
@@ -76,8 +86,15 @@ const pagoController = {
 
                     const resumenMetodos = pagos
                         .map(p => {
-                            const ref = p.referencia ? ` (REF: ${p.referencia.toUpperCase()})` : '';
-                            return `${p.metodo_pago}${ref}: $${parseFloat(p.monto).toFixed(2)}`;
+                            let detalle = '';
+                            if (p.metodo_pago === 'Transferencia') {
+                                const partes = [];
+                                if (p.referencia) partes.push(`REF: ${p.referencia.toUpperCase()}`);
+                                if (p.banco) partes.push(`BANCO: ${p.banco.toUpperCase()}`);
+                                if (p.titular) partes.push(`TITULAR: ${p.titular.toUpperCase()}`);
+                                if (partes.length > 0) detalle = ` (${partes.join(', ')})`;
+                            }
+                            return `${p.metodo_pago}${detalle}: $${parseFloat(p.monto).toFixed(2)}`;
                         })
                         .join(' — ');
 
@@ -119,6 +136,7 @@ const pagoController = {
                 e.message.includes('estado') ||
                 e.message.includes('coincide') ||
                 e.message.includes('obligatorio') ||
+                e.message.includes('obligatoria') ||
                 e.message.includes('referencia') ||
                 e.message.includes('inválido') ||
                 e.message.includes('diferente') ||
@@ -134,15 +152,24 @@ const pagoController = {
     // {
     //   id_orden: number,
     //   reembolsos: [
-    //     { monto: number, metodo_reembolso: "Efectivo" | "Transferencia", referencia?: string },
-    //     // segunda parte opcional para reembolso mixto:
-    //     { monto: number, metodo_reembolso: "Efectivo" | "Transferencia", referencia?: string }
+    //     {
+    //       monto: number,
+    //       metodo_reembolso: "Efectivo" | "Transferencia",
+    //       // Los siguientes 3 campos son obligatorios SOLO si metodo_reembolso = "Transferencia":
+    //       referencia?: string,       // número de referencia/comprobante
+    //       banco?: string,            // banco al que se transfiere el reembolso
+    //       titular?: string,          // nombre de quien recibe la transferencia
+    //       cedula_titular?: string,   // cédula de quien recibe la transferencia
+    //     },
+    //     // segunda parte opcional para reembolso mixto (mismo formato)
     //   ],
     //   motivo: string
     // }
     //
     // Compatibilidad hacia atrás: si el cliente envía { id_orden, monto, metodo_reembolso, referencia, motivo }
-    // (forma antigua) se normaliza automáticamente a la nueva estructura.
+    // (forma antigua) se normaliza automáticamente a la nueva estructura. Nota: esta
+    // forma antigua no incluye banco/titular/cedula_titular, por lo que solo debe
+    // usarse para reembolsos en Efectivo.
     //
     // Solo se pueden reembolsar órdenes en estado 'Pagada'. Si el monto
     // reembolsado cubre el 100% de lo pagado, la orden pasa a 'Cancelada'.
@@ -151,7 +178,7 @@ const pagoController = {
     // disponible en el turno de caja activo.
     procesarReembolso: async (req, res) => {
         try {
-            const { id_orden, reembolsos, monto, metodo_reembolso, referencia, motivo } = req.body;
+            const { id_orden, reembolsos, monto, metodo_reembolso, referencia, banco, titular, cedula_titular, motivo } = req.body;
 
             if (!id_orden) {
                 return res.status(400).json({ error: 'id_orden es obligatorio.' });
@@ -176,6 +203,9 @@ const pagoController = {
                 monto,
                 metodo_reembolso,
                 referencia,
+                banco,
+                titular,
+                cedula_titular,
                 motivo,
             });
 
@@ -239,6 +269,7 @@ const pagoController = {
                 e.message.includes('estado') ||
                 e.message.includes('supera') ||
                 e.message.includes('obligatorio') ||
+                e.message.includes('obligatoria') ||
                 e.message.includes('inválido') ||
                 e.message.includes('mayor a 0') ||
                 e.message.includes('turno de caja') ||

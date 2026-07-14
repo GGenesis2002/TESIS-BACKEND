@@ -200,106 +200,72 @@ getArqueoCajaHoy: async (req, res) => {
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
-        // 1. Determinar si filtramos por secretaria (si es asistente) o global (si es admin)
-        const secRes = await pool.query(
-            `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+        // 1. DETERMINAR PERMISOS: 
+        // Si el usuario es Administrador (Rol 1), id_secretaria debe ser NULL para ver todo.
+        // Solo buscamos id_secretaria si NO es administrador.
+        
+        let id_secretaria_filtro = null;
+        
+        // Asumimos que req.user.id_rol viene del middleware de autenticación
+        // Si no tienes id_rol en el token, lo buscamos por base de datos:
+        const rolRes = await pool.query(
+            `SELECT id_rol FROM usuario_rol WHERE id_usuario = $1 AND activo = TRUE AND id_rol = 1`,
             [req.user.id]
         );
-        const id_secretaria = secRes.rows.length > 0 ? secRes.rows[0].id_secretaria : null;
+        const esAdmin = rolRes.rows.length > 0;
 
-        // 2. Consulta de Totales optimizada con UNION para evitar nulos por falta de registros
+        if (!esAdmin) {
+            const secRes = await pool.query(
+                `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+                [req.user.id]
+            );
+            id_secretaria_filtro = secRes.rows.length > 0 ? secRes.rows[0].id_secretaria : null;
+        }
+
+        // 2. CONSULTA DE TOTALES
+        // Simplificamos el manejo de fechas para evitar desfases de horas
         const queryTotales = `
             SELECT
-                -- Totales Netos (Cobros - Reembolsos)
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) -
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Efectivo%'), 0) AS efectivo,
 
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Transferencia%'), 0) -
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Transferencia%'), 0) AS transferencia,
 
-                -- Desglose detallado para compatibilidad con el frontend
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) AS efectivo_cobrado,
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Efectivo%'), 0) AS reembolsos_efectivo,
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Transferencia%'), 0) AS transferencia_cobrada,
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Transferencia%'), 0) AS reembolsos_transferencia
             FROM (
-                -- Unificamos pagos y reembolsos en una sola tabla virtual t
                 SELECT 'pago' as origen, metodo_pago as metodo, monto, fecha_pago as fecha, id_secretaria FROM pago
                 UNION ALL
                 SELECT 'reembolso' as origen, metodo_reembolso as metodo, monto, fecha_reembolso as fecha, id_secretaria FROM reembolso
             ) t
-            WHERE (t.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
+            WHERE t.fecha::date BETWEEN $1 AND $2
               AND ($3::int IS NULL OR t.id_secretaria = $3)
         `;
 
-        // 3. Consulta de Movimientos (el listado que sale al abrir el modal)
-        const queryMovimientos = `
-            SELECT usuario, tipo, metodo, monto, hora, ticket
-            FROM (
-                SELECT
-                    CONCAT(u.nombres, ' ', u.apellidos) AS usuario,
-                    'cobro' AS tipo,
-                    CASE
-                        WHEN pa.metodo_pago ILIKE 'Efectivo%' THEN 'Efectivo'
-                        WHEN pa.metodo_pago ILIKE 'Transferencia%' THEN 'Transferencia'
-                        ELSE pa.metodo_pago
-                    END AS metodo,
-                    pa.monto,
-                    pa.fecha_pago AS hora,
-                    om.numero_ticket AS ticket,
-                    pa.id_secretaria
-                FROM pago pa
-                LEFT JOIN orden_medica om ON pa.id_orden = om.id_orden
-                LEFT JOIN asistente_analista aa ON pa.id_secretaria = aa.id_secretaria
-                LEFT JOIN usuario u ON aa.id_usuario = u.id_usuario
-
-                UNION ALL
-
-                SELECT
-                    CONCAT(u.nombres, ' ', u.apellidos) AS usuario,
-                    'reembolso' AS tipo,
-                    re.metodo_reembolso AS metodo,
-                    re.monto,
-                    re.fecha_reembolso AS hora,
-                    om.numero_ticket AS ticket,
-                    re.id_secretaria
-                FROM reembolso re
-                LEFT JOIN orden_medica om ON re.id_orden = om.id_orden
-                LEFT JOIN asistente_analista aa ON re.id_secretaria = aa.id_secretaria
-                LEFT JOIN usuario u ON aa.id_usuario = u.id_usuario
-            ) mov
-            WHERE (mov.hora AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
-              AND ($3::int IS NULL OR mov.id_secretaria = $3)
-            ORDER BY hora DESC;
-        `;
-
-        const [resTotales, resMovimientos] = await Promise.all([
-            pool.query(queryTotales, [desde, hasta, id_secretaria]),
-            pool.query(queryMovimientos, [desde, hasta, id_secretaria]),
+        const [resTotales] = await Promise.all([
+            pool.query(queryTotales, [desde, hasta, id_secretaria_filtro])
         ]);
 
         const totales = resTotales.rows[0];
 
-        // 4. Retornar los datos parseados como números para que el frontend no tenga problemas
         res.json({
-            efectivo: parseFloat(totales.efectivo),
-            transferencia: parseFloat(totales.transferencia),
-            efectivo_cobrado: parseFloat(totales.efectivo_cobrado),
-            reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo),
-            transferencia_cobrada: parseFloat(totales.transferencia_cobrada),
-            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia),
-            tarjeta: 0,
-            movimientos: resMovimientos.rows.map(m => ({
-                ...m,
-                monto: parseFloat(m.monto)
-            }))
+            efectivo: parseFloat(totales.efectivo || 0),
+            transferencia: parseFloat(totales.transferencia || 0),
+            efectivo_cobrado: parseFloat(totales.efectivo_cobrado || 0),
+            reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo || 0),
+            transferencia_cobrada: parseFloat(totales.transferencia_cobrada || 0),
+            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia || 0)
         });
 
     } catch (e) {
-        console.error("Error crítico en getArqueoCajaHoy:", e);
-        res.status(500).json({ error: "Error interno al calcular el arqueo de caja." });
+        console.error("Error en getArqueoCajaHoy:", e);
+        res.status(500).json({ error: "Error interno al calcular el arqueo." });
     }
 },
+
     // ─── DRILL-DOWN: ARQUEO DEL DÍA DESGLOSADO POR USUARIO ──────────────────
     getArqueoPorUsuario: async (req, res) => {
         try {

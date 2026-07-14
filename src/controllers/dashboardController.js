@@ -200,84 +200,76 @@ getArqueoCajaHoy: async (req, res) => {
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
-        // ── Determinar si el usuario autenticado es una secretaria/asistente ────
-        // Si lo es, filtramos todo por su id_secretaria; si no (admin), sin filtro.
+        // 1. Determinar si filtramos por secretaria (si es asistente) o global (si es admin)
         const secRes = await pool.query(
             `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
             [req.user.id]
         );
         const id_secretaria = secRes.rows.length > 0 ? secRes.rows[0].id_secretaria : null;
 
+        // 2. Consulta de Totales optimizada con UNION para evitar nulos por falta de registros
         const queryTotales = `
-            WITH pagos AS (
-                SELECT
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Efectivo%'), 0)      AS efectivo,
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Transferencia%'), 0) AS transferencia
-                FROM pago
-                WHERE fecha_pago::date BETWEEN $1 AND $2
-                  AND ($3::int IS NULL OR id_secretaria = $3)
-            ),
-            reembolsos AS (
-                SELECT
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Efectivo'), 0)      AS efectivo,
-                    COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS transferencia
-                FROM reembolso
-                WHERE fecha_reembolso::date BETWEEN $1 AND $2
-                  AND ($3::int IS NULL OR id_secretaria = $3)
-            )
             SELECT
-                (pagos.efectivo - reembolsos.efectivo)           AS efectivo,
-                (pagos.transferencia - reembolsos.transferencia) AS transferencia,
-                pagos.efectivo                                   AS efectivo_cobrado,
-                reembolsos.efectivo                              AS efectivo_reembolsado,
-                pagos.transferencia                              AS transferencia_cobrada,
-                reembolsos.transferencia                         AS transferencia_reembolsada,
-                -- Alias con el nombre viejo que usa Admindashboard.jsx (misma info que arriba)
-                reembolsos.efectivo                              AS reembolsos_efectivo,
-                reembolsos.transferencia                         AS reembolsos_transferencia,
-                0                                                AS tarjeta
-            FROM pagos, reembolsos;
+                -- Totales Netos (Cobros - Reembolsos)
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) -
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Efectivo%'), 0) AS efectivo,
+
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Transferencia%'), 0) -
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Transferencia%'), 0) AS transferencia,
+
+                -- Desglose detallado para compatibilidad con el frontend
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) AS efectivo_cobrado,
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Efectivo%'), 0) AS reembolsos_efectivo,
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Transferencia%'), 0) AS transferencia_cobrada,
+                COALESCE(SUM(monto) FILTER (WHERE origen = 'reembolso' AND metodo ILIKE 'Transferencia%'), 0) AS reembolsos_transferencia
+            FROM (
+                -- Unificamos pagos y reembolsos en una sola tabla virtual t
+                SELECT 'pago' as origen, metodo_pago as metodo, monto, fecha_pago as fecha, id_secretaria FROM pago
+                UNION ALL
+                SELECT 'reembolso' as origen, metodo_reembolso as metodo, monto, fecha_reembolso as fecha, id_secretaria FROM reembolso
+            ) t
+            WHERE (t.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR t.id_secretaria = $3)
         `;
 
-        // Detalle transacción por transacción para el listado "Movimientos del turno".
-        // Se arma con UNION ALL (cobros + reembolsos) uniendo usuario y ticket de la orden.
+        // 3. Consulta de Movimientos (el listado que sale al abrir el modal)
         const queryMovimientos = `
             SELECT usuario, tipo, metodo, monto, hora, ticket
             FROM (
                 SELECT
-                    CONCAT(u.nombres, ' ', u.apellidos)              AS usuario,
-                    'cobro'                                          AS tipo,
+                    CONCAT(u.nombres, ' ', u.apellidos) AS usuario,
+                    'cobro' AS tipo,
                     CASE
-                        WHEN pa.metodo_pago ILIKE 'Efectivo%'      THEN 'Efectivo'
+                        WHEN pa.metodo_pago ILIKE 'Efectivo%' THEN 'Efectivo'
                         WHEN pa.metodo_pago ILIKE 'Transferencia%' THEN 'Transferencia'
                         ELSE pa.metodo_pago
-                    END                                              AS metodo,
-                    pa.monto                                         AS monto,
-                    pa.fecha_pago                                    AS hora,
-                    om.numero_ticket                                 AS ticket
+                    END AS metodo,
+                    pa.monto,
+                    pa.fecha_pago AS hora,
+                    om.numero_ticket AS ticket,
+                    pa.id_secretaria
                 FROM pago pa
-                LEFT JOIN orden_medica om        ON pa.id_orden = om.id_orden
-                LEFT JOIN asistente_analista aa  ON pa.id_secretaria = aa.id_secretaria
-                LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
-                WHERE pa.fecha_pago::date BETWEEN $1 AND $2
-                  AND ($3::int IS NULL OR pa.id_secretaria = $3)
+                LEFT JOIN orden_medica om ON pa.id_orden = om.id_orden
+                LEFT JOIN asistente_analista aa ON pa.id_secretaria = aa.id_secretaria
+                LEFT JOIN usuario u ON aa.id_usuario = u.id_usuario
 
                 UNION ALL
 
                 SELECT
-                    CONCAT(u.nombres, ' ', u.apellidos)              AS usuario,
-                    'reembolso'                                      AS tipo,
-                    re.metodo_reembolso                              AS metodo,
-                    re.monto                                         AS monto,
-                    re.fecha_reembolso                               AS hora,
-                    om.numero_ticket                                 AS ticket
+                    CONCAT(u.nombres, ' ', u.apellidos) AS usuario,
+                    'reembolso' AS tipo,
+                    re.metodo_reembolso AS metodo,
+                    re.monto,
+                    re.fecha_reembolso AS hora,
+                    om.numero_ticket AS ticket,
+                    re.id_secretaria
                 FROM reembolso re
-                LEFT JOIN orden_medica om        ON re.id_orden = om.id_orden
-                LEFT JOIN asistente_analista aa  ON re.id_secretaria = aa.id_secretaria
-                LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
-                WHERE re.fecha_reembolso::date BETWEEN $1 AND $2
-                  AND ($3::int IS NULL OR re.id_secretaria = $3)
+                LEFT JOIN orden_medica om ON re.id_orden = om.id_orden
+                LEFT JOIN asistente_analista aa ON re.id_secretaria = aa.id_secretaria
+                LEFT JOIN usuario u ON aa.id_usuario = u.id_usuario
             ) mov
+            WHERE (mov.hora AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR mov.id_secretaria = $3)
             ORDER BY hora DESC;
         `;
 
@@ -286,19 +278,26 @@ getArqueoCajaHoy: async (req, res) => {
             pool.query(queryMovimientos, [desde, hasta, id_secretaria]),
         ]);
 
-        const movimientos = resMovimientos.rows.map(m => ({
-            usuario: m.usuario || 'No registrado',
-            tipo: m.tipo,
-            metodo: m.metodo,
-            monto: parseFloat(m.monto),
-            hora: m.hora,
-            ticket: m.ticket || null,
-        }));
+        const totales = resTotales.rows[0];
 
-        res.json({ ...resTotales.rows[0], movimientos });
+        // 4. Retornar los datos parseados como números para que el frontend no tenga problemas
+        res.json({
+            efectivo: parseFloat(totales.efectivo),
+            transferencia: parseFloat(totales.transferencia),
+            efectivo_cobrado: parseFloat(totales.efectivo_cobrado),
+            reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo),
+            transferencia_cobrada: parseFloat(totales.transferencia_cobrada),
+            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia),
+            tarjeta: 0,
+            movimientos: resMovimientos.rows.map(m => ({
+                ...m,
+                monto: parseFloat(m.monto)
+            }))
+        });
+
     } catch (e) {
-        console.error("Error en getArqueoCajaHoy:", e);
-        res.status(500).json({ error: "Error en el servidor al calcular el arqueo" });
+        console.error("Error crítico en getArqueoCajaHoy:", e);
+        res.status(500).json({ error: "Error interno al calcular el arqueo de caja." });
     }
 },
     // ─── DRILL-DOWN: ARQUEO DEL DÍA DESGLOSADO POR USUARIO ──────────────────

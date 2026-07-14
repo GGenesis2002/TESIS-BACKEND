@@ -39,6 +39,26 @@ const cajaModule = {
     },
 
     /**
+     * Último cierre de caja registrado en todo el sistema (de cualquier
+     * secretaria), con su detalle completo. Como la caja es física y única,
+     * quien abre un turno nuevo necesita saber en qué quedó el turno anterior
+     * (fondo inicial, cobrado, reembolsado y diferencia), sin importar quién
+     * lo haya cerrado. Devuelve null si todavía no hay ningún cierre.
+     */
+    obtenerUltimoCierreGlobal: async () => {
+        const { rows } = await pool.query(
+            `SELECT cc.*, u.nombres, u.apellidos, u.username
+             FROM cierre_caja cc
+             JOIN asistente_analista aa ON cc.id_secretaria = aa.id_secretaria
+             JOIN usuario u ON aa.id_usuario = u.id_usuario
+             WHERE cc.estado = 'CERRADO'
+             ORDER BY cc.fecha_cierre DESC
+             LIMIT 1`
+        );
+        return rows.length > 0 ? rows[0] : null;
+    },
+
+    /**
      * Busca si existe CUALQUIER turno de caja abierto en el sistema (de
      * cualquier secretaria), junto con el nombre de quien lo tiene abierto.
      * La caja es física/única, así que solo puede haber un turno ABIERTO

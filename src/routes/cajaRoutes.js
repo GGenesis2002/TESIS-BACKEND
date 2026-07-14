@@ -9,6 +9,10 @@ router.post('/abrir', verifyToken, cajaController.abrirTurno);
 // GET /caja/actual — Turno de caja abierto de la secretaria autenticada
 router.get('/actual', verifyToken, cajaController.obtenerTurnoActivo);
 
+// GET /caja/ultimo-cierre — Último cierre de caja registrado en el sistema
+// (de cualquier secretaria), para mostrarlo antes de abrir un turno nuevo
+router.get('/ultimo-cierre', verifyToken, cajaController.obtenerUltimoCierre);
+
 // POST /caja/cerrar — Cierra el turno de caja activo (arqueo de caja)
 router.post('/cerrar', verifyToken, cajaController.cerrarTurno);
 

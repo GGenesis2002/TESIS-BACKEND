@@ -106,6 +106,17 @@ const cajaController = {
             res.status(e.esPerfil ? 403 : 500).json({ error: e.message });
         }
     },
+    // GET /caja/ultimo-cierre — último cierre de caja registrado en el sistema
+    // (de cualquier secretaria), para que quien abre un turno nuevo sepa en
+    // qué quedó el turno anterior antes de empezar el suyo.
+    obtenerUltimoCierre: async (req, res) => {
+        try {
+            const ultimo = await cajaModule.obtenerUltimoCierreGlobal();
+            res.json(ultimo);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
 };
 
 module.exports = cajaController;

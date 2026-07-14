@@ -140,8 +140,9 @@ const pagoController = {
                 e.message.includes('referencia') ||
                 e.message.includes('inválido') ||
                 e.message.includes('diferente') ||
-                e.message.includes('turno de caja');
-                
+                e.message.includes('turno de caja') ||
+                e.message.includes('insuficiente');
+
             res.status(esErrorNegocio ? 400 : 500).json({ error: e.message });
         }
     },

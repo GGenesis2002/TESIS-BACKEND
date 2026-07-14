@@ -41,6 +41,33 @@ const pagoModule = {
 
             const totalOrden = parseFloat(ordenRes.rows[0].total);
 
+            // 1.b Validar que haya stock suficiente de los insumos que se
+            //     necesitarán para esta orden (mismo chequeo que se hace al
+            //     registrar la toma de muestra en muestraModule.registrarToma,
+            //     pero aquí NO se descuenta nada del inventario — solo se
+            //     bloquea el cobro si algún insumo ya no alcanza). Así se
+            //     evita cobrarle a un paciente una orden que después no se
+            //     podrá procesar por falta de insumos.
+            const stockCheck = await client.query(`
+                SELECT
+                    i.nombre,
+                    i.stock_actual,
+                    MAX(ei.cantidad_usada) AS necesita
+                FROM detalle_orden do2
+                JOIN examen_insumo ei ON do2.id_examen = ei.id_examen
+                JOIN insumos i        ON ei.id_insumo  = i.id_insumo
+                WHERE do2.id_orden = $1
+                GROUP BY i.id_insumo, i.nombre, i.stock_actual
+                HAVING i.stock_actual < MAX(ei.cantidad_usada)
+            `, [id_orden]);
+
+            if (stockCheck.rows.length > 0) {
+                const faltantes = stockCheck.rows
+                    .map(r => `"${r.nombre}" (disponible: ${r.stock_actual}, necesita: ${r.necesita})`)
+                    .join(' | ');
+                throw new Error(`No se puede generar el pago: stock insuficiente para: ${faltantes}`);
+            }
+
             // 2. Verificar que la secretaria tenga un turno de caja abierto.
             //    Todo cobro debe quedar asociado a un turno para poder
             //    cuadrarlo después en el cierre de caja.

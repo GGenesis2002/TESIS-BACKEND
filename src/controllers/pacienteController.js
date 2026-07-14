@@ -235,7 +235,8 @@ const pacienteController = {
         try {
             const { id } = req.params;
             // 1. Agregamos la "cedula" al destructuring del body
-            const { cedula, nombres, apellidos, correo, telefono, direccion, genero, fecha_nacimiento } = req.body;
+            // password es OPCIONAL: solo llega cuando el admin activó "Habilitar cambio de contraseña" en el front.
+            const { cedula, nombres, apellidos, correo, telefono, direccion, genero, fecha_nacimiento, password } = req.body;
 
             // 2. Validamos que la nueva cédula o correo no le pertenezcan a OTRO usuario distinto al que estamos editando
             const dupCheck = await pool.query(
@@ -251,11 +252,20 @@ const pacienteController = {
             await client.query('BEGIN');
 
             // 3. Incluimos la cédula en el UPDATE de la tabla usuario
-            await client.query(
-                `UPDATE usuario SET cedula=$1, nombres=$2, apellidos=$3, correo=$4 WHERE id_usuario=$5`,
-                [cedula, nombres, apellidos, correo, id]
-            );
-            
+            const nuevaPassword = (password || "").trim();
+            if (nuevaPassword !== "") {
+                const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
+                await client.query(
+                    `UPDATE usuario SET cedula=$1, nombres=$2, apellidos=$3, correo=$4, password=$5 WHERE id_usuario=$6`,
+                    [cedula, nombres, apellidos, correo, hashedPassword, id]
+                );
+            } else {
+                await client.query(
+                    `UPDATE usuario SET cedula=$1, nombres=$2, apellidos=$3, correo=$4 WHERE id_usuario=$5`,
+                    [cedula, nombres, apellidos, correo, id]
+                );
+            }
+
             await client.query(
                 `UPDATE paciente SET telefono=$1, direccion=$2, genero=$3, fecha_nacimiento=$4
                  WHERE id_usuario=$5`,
@@ -267,7 +277,7 @@ const pacienteController = {
                 req.user.id,
                 req.user.id_usuario_rol,
                 'ACTUALIZAR_PACIENTE',
-                `Editó datos del paciente ID: ${id}, Nueva Cédula: ${cedula}`
+                `Editó datos del paciente ID: ${id}, Nueva Cédula: ${cedula}${nuevaPassword !== "" ? " (contraseña restablecida por el administrador)" : ""}`
             );
 
             await client.query('COMMIT');

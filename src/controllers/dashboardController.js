@@ -170,11 +170,27 @@ const dashboardController = {
 
 
     // Renombrado conceptualmente a "Ingresos" (ya no es solo "hoy"): acepta ?desde=&hasta=
+    //
+    // Alcance de los datos:
+    //  - Si quien consulta tiene perfil de asistente/secretaria (asistente_analista),
+    //    el arqueo se restringe SOLO a su propio id_secretaria (su propio turno/caja),
+    //    para que en Dashboardasistente.jsx cada secretaria vea únicamente lo suyo.
+    //  - Si quien consulta NO tiene ese perfil (p. ej. el administrador), se mantiene
+    //    el comportamiento global de siempre (todas las secretarias), que es lo que
+    //    consume Admindashboard.jsx.
 getArqueoCajaHoy: async (req, res) => {
     try {
         const hoyISO = new Date().toISOString().split('T')[0];
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
+
+        // ── Determinar si el usuario autenticado es una secretaria/asistente ────
+        // Si lo es, filtramos todo por su id_secretaria; si no (admin), sin filtro.
+        const secRes = await pool.query(
+            `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+            [req.user.id]
+        );
+        const id_secretaria = secRes.rows.length > 0 ? secRes.rows[0].id_secretaria : null;
 
         const queryTotales = `
             WITH pagos AS (
@@ -183,6 +199,7 @@ getArqueoCajaHoy: async (req, res) => {
                     COALESCE(SUM(monto) FILTER (WHERE metodo_pago LIKE 'Transferencia%'), 0) AS transferencia
                 FROM pago
                 WHERE fecha_pago::date BETWEEN $1 AND $2
+                  AND ($3::int IS NULL OR id_secretaria = $3)
             ),
             reembolsos AS (
                 SELECT
@@ -190,6 +207,7 @@ getArqueoCajaHoy: async (req, res) => {
                     COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS transferencia
                 FROM reembolso
                 WHERE fecha_reembolso::date BETWEEN $1 AND $2
+                  AND ($3::int IS NULL OR id_secretaria = $3)
             )
             SELECT
                 (pagos.efectivo - reembolsos.efectivo)           AS efectivo,
@@ -226,6 +244,7 @@ getArqueoCajaHoy: async (req, res) => {
                 LEFT JOIN asistente_analista aa  ON pa.id_secretaria = aa.id_secretaria
                 LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
                 WHERE pa.fecha_pago::date BETWEEN $1 AND $2
+                  AND ($3::int IS NULL OR pa.id_secretaria = $3)
 
                 UNION ALL
 
@@ -241,13 +260,14 @@ getArqueoCajaHoy: async (req, res) => {
                 LEFT JOIN asistente_analista aa  ON re.id_secretaria = aa.id_secretaria
                 LEFT JOIN usuario u              ON aa.id_usuario = u.id_usuario
                 WHERE re.fecha_reembolso::date BETWEEN $1 AND $2
+                  AND ($3::int IS NULL OR re.id_secretaria = $3)
             ) mov
             ORDER BY hora DESC;
         `;
 
         const [resTotales, resMovimientos] = await Promise.all([
-            pool.query(queryTotales, [desde, hasta]),
-            pool.query(queryMovimientos, [desde, hasta]),
+            pool.query(queryTotales, [desde, hasta, id_secretaria]),
+            pool.query(queryMovimientos, [desde, hasta, id_secretaria]),
         ]);
 
         const movimientos = resMovimientos.rows.map(m => ({

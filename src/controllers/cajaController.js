@@ -96,13 +96,14 @@ const cajaController = {
         }
     },
 
-    // GET /caja/historial — historial de todos los cierres realizados
+    // GET /caja/historial — historial de los cierres realizados por la secretaria autenticada
     listarCierres: async (req, res) => {
         try {
-            const lista = await cajaModule.listarCierres();
+            const id_secretaria = await obtenerIdSecretaria(req.user.id);
+            const lista = await cajaModule.listarCierres(id_secretaria);
             res.json(lista);
         } catch (e) {
-            res.status(500).json({ error: e.message });
+            res.status(e.esPerfil ? 403 : 500).json({ error: e.message });
         }
     },
 };

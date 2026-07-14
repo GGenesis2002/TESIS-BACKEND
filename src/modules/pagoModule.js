@@ -431,10 +431,11 @@ const pagoModule = {
     },
 
     /**
-     * Reporte histórico de todos los reembolsos, con datos del paciente,
-     * la orden y la secretaria que lo procesó.
+     * Reporte histórico de los reembolsos procesados por la secretaria
+     * autenticada (con datos del paciente y de la orden). Cada secretaria
+     * solo ve sus propios reembolsos, no los de sus compañeras.
      */
-    reporteReembolsos: async () => {
+    reporteReembolsos: async (id_secretaria) => {
         const query = `
             SELECT
                 r.*,
@@ -450,9 +451,10 @@ const pagoModule = {
             JOIN usuario      up  ON pac.id_usuario   = up.id_usuario
             LEFT JOIN asistente_analista aa ON r.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            ua ON aa.id_usuario   = ua.id_usuario
+            WHERE r.id_secretaria = $1
             ORDER BY r.fecha_reembolso DESC`;
 
-        const { rows } = await pool.query(query);
+        const { rows } = await pool.query(query, [id_secretaria]);
         return rows;
     },
 };

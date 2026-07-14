@@ -41,8 +41,16 @@ registrarPersonal: async (req, res) => {
         const {
             id_rol, id_roles, cedula, nombres, apellidos,
             correo, username, password,
-            cargo, especialidad, turno, examenes_asignados,
+            cargo, especialidad, especialidades, turno, examenes_asignados,
         } = req.body;
+
+        // NUEVO: un especialista puede tener varias áreas de laboratorio.
+        // Se acepta "especialidades" (arreglo, formato nuevo) y se mantiene
+        // compatibilidad con "especialidad" (string, formato viejo) por si
+        // algún cliente antiguo todavía lo envía así.
+        const especialidadesFinal = Array.isArray(especialidades) && especialidades.length > 0
+            ? especialidades
+            : (especialidad ? [especialidad] : ['General']);
 
         await client.query('BEGIN');
 
@@ -103,10 +111,12 @@ registrarPersonal: async (req, res) => {
                 );
             }
             if (rolIdNum === 3) {
+                // especialidadesFinal es un arreglo JS; node-postgres lo serializa
+                // automáticamente al tipo TEXT[] de la columna, sin tablas nuevas.
                 await client.query(
                     `INSERT INTO especialista (id_usuario, especialidad) VALUES ($1, $2)
                      ON CONFLICT (id_usuario) DO UPDATE SET especialidad = EXCLUDED.especialidad`,
-                    [id_usuario, especialidad || 'General']
+                    [id_usuario, especialidadesFinal]
                 );
             }
             if (rolIdNum === 4) {
@@ -175,8 +185,14 @@ registrarPersonal: async (req, res) => {
             const {
                 id_rol, id_roles, cedula, nombres, apellidos,
                 correo, username, password,
-                cargo, especialidad, turno, examenes_asignados
+                cargo, especialidad, especialidades, turno, examenes_asignados
             } = req.body;
+
+            // Igual que en registrarPersonal: soporta el arreglo nuevo y,
+            // por compatibilidad, el string viejo.
+            const especialidadesFinal = Array.isArray(especialidades) && especialidades.length > 0
+                ? especialidades
+                : (especialidad ? [especialidad] : ['General']);
 
             await client.query('BEGIN');
 
@@ -224,9 +240,9 @@ registrarPersonal: async (req, res) => {
                 if (rolIdNum === 3) {
                     const checkEsp = await client.query(`SELECT 1 FROM especialista WHERE id_usuario = $1`, [id]);
                     if (checkEsp.rowCount > 0) {
-                        await client.query(`UPDATE especialista SET especialidad = $1 WHERE id_usuario = $2`, [especialidad, id]);
+                        await client.query(`UPDATE especialista SET especialidad = $1 WHERE id_usuario = $2`, [especialidadesFinal, id]);
                     } else {
-                        await client.query(`INSERT INTO especialista (id_usuario, especialidad) VALUES ($1, $2)`, [id, especialidad || 'General']);
+                        await client.query(`INSERT INTO especialista (id_usuario, especialidad) VALUES ($1, $2)`, [id, especialidadesFinal]);
                     }
                 }
 

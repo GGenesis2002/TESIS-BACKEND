@@ -251,10 +251,20 @@ const pagoController = {
         }
     },
 
-    // GET /pagos/reembolsos
+    // GET /pagos/reembolsos — reembolsos procesados por la secretaria autenticada
     verReembolsos: async (req, res) => {
         try {
-            const lista = await pagoModule.reporteReembolsos();
+            const secRes = await pool.query(
+                `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+                [req.user.id]
+            );
+            if (secRes.rows.length === 0) {
+                return res.status(403).json({
+                    error: 'El usuario autenticado no tiene perfil de asistente/secretaria asignado.'
+                });
+            }
+            const id_secretaria = secRes.rows[0].id_secretaria;
+            const lista = await pagoModule.reporteReembolsos(id_secretaria);
             res.json(lista);
         } catch (e) {
             res.status(500).json({ error: e.message });

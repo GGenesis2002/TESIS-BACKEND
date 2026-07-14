@@ -39,18 +39,38 @@ const cajaModule = {
     },
 
     /**
-     * Abre un turno de caja para la secretaria. El índice único parcial
-     * en la BD garantiza que no pueda tener dos turnos ABIERTOS a la vez,
-     * pero igual lo validamos aquí para dar un mensaje de error claro.
+     * Busca si existe CUALQUIER turno de caja abierto en el sistema (de
+     * cualquier secretaria), junto con el nombre de quien lo tiene abierto.
+     * La caja es física/única, así que solo puede haber un turno ABIERTO
+     * a la vez entre todas las secretarias.
+     */
+    _turnoAbiertoGlobal: async () => {
+        const { rows } = await pool.query(
+            `SELECT cc.id_cierre, cc.id_secretaria, cc.fecha_apertura, u.nombres, u.apellidos
+             FROM cierre_caja cc
+             JOIN asistente_analista aa ON cc.id_secretaria = aa.id_secretaria
+             JOIN usuario u ON aa.id_usuario = u.id_usuario
+             WHERE cc.estado = 'ABIERTO'
+             LIMIT 1`
+        );
+        return rows.length > 0 ? rows[0] : null;
+    },
+
+    /**
+     * Abre un turno de caja para la secretaria. Como la caja es física y
+     * única, no puede haber dos turnos ABIERTOS a la vez en todo el sistema
+     * (ni de la misma secretaria, ni de otra distinta).
      */
     abrirTurno: async ({ id_secretaria, monto_inicial }) => {
-        const abiertoRes = await pool.query(
-            `SELECT id_cierre FROM cierre_caja WHERE id_secretaria = $1 AND estado = 'ABIERTO'`,
-            [id_secretaria]
-        );
-        if (abiertoRes.rows.length > 0) {
+        const abierto = await cajaModule._turnoAbiertoGlobal();
+        if (abierto) {
+            if (abierto.id_secretaria === id_secretaria) {
+                throw new Error(
+                    `Ya tienes un turno de caja abierto (#${abierto.id_cierre}). Debes cerrarlo antes de abrir uno nuevo.`
+                );
+            }
             throw new Error(
-                `Ya tienes un turno de caja abierto (#${abiertoRes.rows[0].id_cierre}). Debes cerrarlo antes de abrir uno nuevo.`
+                `Ya hay un turno de caja abierto (#${abierto.id_cierre}) por ${abierto.nombres} ${abierto.apellidos}. Debes esperar a que lo cierre antes de abrir uno nuevo.`
             );
         }
 
@@ -71,22 +91,39 @@ const cajaModule = {
     },
 
     /**
-     * Devuelve el turno abierto de la secretaria (o null si no tiene uno),
-     * con los totales acumulados hasta el momento (en vivo).
+     * Devuelve el turno abierto de la secretaria (con esPropio: true), o si
+     * no tiene uno propio, indica si OTRA secretaria tiene la caja abierta
+     * (esPropio: false + datos de quién la abrió), o null si nadie tiene
+     * un turno abierto en el sistema.
      */
     obtenerTurnoActivo: async (id_secretaria) => {
         const { rows } = await pool.query(
             `SELECT * FROM cierre_caja WHERE id_secretaria = $1 AND estado = 'ABIERTO'`,
             [id_secretaria]
         );
-        if (rows.length === 0) return null;
 
-        const turno = rows[0];
-        const resumen = await cajaModule._resumenTurno(turno.id_cierre);
-        const efectivoEsperado =
-            parseFloat(turno.monto_inicial) + resumen.total_efectivo_sistema - resumen.total_reembolsos_efectivo;
+        if (rows.length > 0) {
+            const turno = rows[0];
+            const resumen = await cajaModule._resumenTurno(turno.id_cierre);
+            const efectivoEsperado =
+                parseFloat(turno.monto_inicial) + resumen.total_efectivo_sistema - resumen.total_reembolsos_efectivo;
 
-        return { ...turno, ...resumen, efectivo_esperado_actual: efectivoEsperado };
+            return { ...turno, ...resumen, efectivo_esperado_actual: efectivoEsperado, esPropio: true };
+        }
+
+        // No tiene turno propio: revisar si otra secretaria tiene la caja abierta.
+        const abiertoOtro = await cajaModule._turnoAbiertoGlobal();
+        if (abiertoOtro) {
+            return {
+                esPropio: false,
+                id_cierre: abiertoOtro.id_cierre,
+                fecha_apertura: abiertoOtro.fecha_apertura,
+                secretaria_nombres: abiertoOtro.nombres,
+                secretaria_apellidos: abiertoOtro.apellidos,
+            };
+        }
+
+        return null;
     },
 
     /**
@@ -195,15 +232,18 @@ const cajaModule = {
     },
 
     /**
-     * Historial de todos los cierres de caja (para auditoría / administración).
+     * Historial de cierres de caja realizados por la secretaria autenticada.
+     * Cada secretaria solo ve sus propios cierres, no los de sus compañeras.
      */
-    listarCierres: async () => {
+    listarCierres: async (id_secretaria) => {
         const { rows } = await pool.query(
             `SELECT cc.*, u.nombres, u.apellidos, u.username
              FROM cierre_caja cc
              JOIN asistente_analista aa ON cc.id_secretaria = aa.id_secretaria
              JOIN usuario u ON aa.id_usuario = u.id_usuario
-             ORDER BY cc.fecha_apertura DESC`
+             WHERE cc.id_secretaria = $1
+             ORDER BY cc.fecha_apertura DESC`,
+            [id_secretaria]
         );
         return rows;
     },

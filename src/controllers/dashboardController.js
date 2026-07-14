@@ -17,6 +17,41 @@ function getHoyLocal() {
     }).format(new Date());
 }
 
+// ─── HELPER: FILTRO DE ALCANCE POR ROL (admin ve todo, asistente solo lo suyo) ──
+// Misma lógica que ya usaba getArqueoCajaHoy, extraída aquí para poder
+// reutilizarla en cualquier endpoint que desglose datos por secretaria/usuario
+// y así evitar que un asistente vea los ingresos de sus compañeros.
+async function getFiltroSecretaria(req) {
+    const userRolRes = await pool.query(
+        `SELECT r.nombre 
+         FROM usuario_rol ur 
+         JOIN rol r ON ur.id_rol = r.id_rol 
+         WHERE ur.id_usuario = $1 AND ur.activo = TRUE 
+         LIMIT 1`,
+        [req.user.id]
+    );
+
+    const nombreRol = userRolRes.rows[0]?.nombre;
+
+    if (nombreRol === 'Administrador') {
+        // Admin: sin filtro, la consulta trae todo
+        return null;
+    }
+
+    // Asistente (o cualquier otro rol): solo su propio id_secretaria
+    const secRes = await pool.query(
+        `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+        [req.user.id]
+    );
+
+    if (secRes.rows.length > 0) {
+        return secRes.rows[0].id_secretaria;
+    }
+
+    // No es admin y no tiene perfil de secretaria: forzamos un ID inexistente
+    return -1;
+}
+
 const dashboardController = {
 
     // ─── DASHBOARD ADMINISTRADOR ────────────────────────────────────────────
@@ -284,6 +319,9 @@ getArqueoCajaHoy: async (req, res) => {
             const desde  = req.query.desde || hoyISO;
             const hasta  = req.query.hasta || hoyISO;
 
+            // Alcance: admin ve todos los asistentes, un asistente solo se ve a sí mismo.
+            const id_secretaria_filtro = await getFiltroSecretaria(req);
+
             const query = `
                 WITH cobros AS (
                     SELECT
@@ -328,11 +366,12 @@ getArqueoCajaHoy: async (req, res) => {
                     ORDER BY ur.id_usuario_rol DESC
                     LIMIT 1
                 ) ur1 ON TRUE
-                WHERE cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL
+                WHERE (cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL)
+                  AND ($3::int IS NULL OR aa.id_secretaria = $3)
                 ORDER BY (neto_efectivo + neto_transferencia) DESC
             `;
 
-            const result = await pool.query(query, [desde, hasta]);
+            const result = await pool.query(query, [desde, hasta, id_secretaria_filtro]);
 
             const rows = result.rows.map(row => ({
                 ...row,
@@ -573,6 +612,9 @@ getIngresosPorUsuario: async (req, res) => {
         const desde  = req.query.desde || hoyISO;
         const hasta  = req.query.hasta || hoyISO;
 
+        // Alcance: admin ve todos los asistentes, un asistente solo se ve a sí mismo.
+        const id_secretaria_filtro = await getFiltroSecretaria(req);
+
         const result = await pool.query(`
             WITH cobros AS (
                 SELECT id_secretaria,
@@ -610,9 +652,10 @@ getIngresosPorUsuario: async (req, res) => {
                 ORDER BY ur.id_usuario_rol DESC
                 LIMIT 1
             ) ur1 ON TRUE
-            WHERE cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL
+            WHERE (cobros.id_secretaria IS NOT NULL OR devoluciones.id_secretaria IS NOT NULL)
+              AND ($3::int IS NULL OR aa.id_secretaria = $3)
             ORDER BY total_generado DESC
-        `, [desde, hasta]);
+        `, [desde, hasta, id_secretaria_filtro]);
 
         const rowsCorregidas = result.rows.map(row => ({
             ...row,

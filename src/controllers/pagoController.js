@@ -302,21 +302,41 @@ const pagoController = {
         }
     },
 
-    // GET /pagos/hoy
+    // GET /pagos/hoy — pagos de hoy de la secretaria autenticada
     verPagosHoy: async (req, res) => {
         try {
+            const secRes = await pool.query(
+                `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+                [req.user.id]
+            );
+            if (secRes.rows.length === 0) {
+                return res.status(403).json({
+                    error: 'El usuario autenticado no tiene perfil de asistente/secretaria asignado.'
+                });
+            }
+            const id_secretaria = secRes.rows[0].id_secretaria;
             const hoy = new Date().toISOString().split('T')[0];
-            const lista = await pagoModule.reporteDiario(hoy);
+            const lista = await pagoModule.reporteDiario(hoy, id_secretaria);
             res.json(lista);
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
     },
 
-    // GET /pagos/todos
+    // GET /pagos/todos — historial de pagos de la secretaria autenticada
     verTodosPagos: async (req, res) => {
         try {
-            const lista = await pagoModule.reporteTodos();
+            const secRes = await pool.query(
+                `SELECT id_secretaria FROM asistente_analista WHERE id_usuario = $1`,
+                [req.user.id]
+            );
+            if (secRes.rows.length === 0) {
+                return res.status(403).json({
+                    error: 'El usuario autenticado no tiene perfil de asistente/secretaria asignado.'
+                });
+            }
+            const id_secretaria = secRes.rows[0].id_secretaria;
+            const lista = await pagoModule.reporteTodos(id_secretaria);
             res.json(lista);
         } catch (e) {
             res.status(500).json({ error: e.message });

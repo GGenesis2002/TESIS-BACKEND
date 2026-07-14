@@ -152,7 +152,7 @@ const pagoModule = {
      * Agrupa por id_orden para mostrar una fila por orden aunque tenga pago mixto.
      * Incluye el detalle de métodos usados.
      */
-    reporteDiario: async (fecha) => {
+    reporteDiario: async (fecha, id_secretaria) => {
         const query = `
             SELECT
                 MIN(p.id_pago)                            AS id_pago,
@@ -175,18 +175,20 @@ const pagoModule = {
             LEFT JOIN asistente_analista aa ON p.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            ua ON aa.id_usuario   = ua.id_usuario
             WHERE DATE(p.fecha_pago) = $1
+              AND p.id_secretaria = $2
             GROUP BY p.id_orden, o.numero_ticket, o.total, o.estado, up.nombres, up.apellidos, up.cedula, ua.username
             ORDER BY MAX(p.fecha_pago) DESC`;
 
-        const { rows } = await pool.query(query, [fecha]);
+        const { rows } = await pool.query(query, [fecha, id_secretaria]);
         return rows;
     },
 
     /**
-     * Reporte histórico de todos los pagos.
-     * Agrupa por id_orden (igual que reporteDiario).
+     * Reporte histórico de los pagos procesados por la secretaria autenticada.
+     * Agrupa por id_orden (igual que reporteDiario). Cada secretaria solo ve
+     * sus propios pagos, no los de sus compañeras.
      */
-    reporteTodos: async () => {
+    reporteTodos: async (id_secretaria) => {
         const query = `
             SELECT
                 MIN(p.id_pago)                            AS id_pago,
@@ -208,10 +210,11 @@ const pagoModule = {
             JOIN usuario            up  ON pac.id_usuario   = up.id_usuario
             LEFT JOIN asistente_analista aa ON p.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario            ua ON aa.id_usuario   = ua.id_usuario
+            WHERE p.id_secretaria = $1
             GROUP BY p.id_orden, o.numero_ticket, o.total, o.estado, up.nombres, up.apellidos, up.cedula, ua.username
             ORDER BY MAX(p.fecha_pago) DESC`;
 
-        const { rows } = await pool.query(query);
+        const { rows } = await pool.query(query, [id_secretaria]);
         return rows;
     },
 

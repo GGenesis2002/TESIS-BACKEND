@@ -266,14 +266,12 @@ const pagoModule = {
      * @param {Object} datos
      * @param {number} datos.id_orden
      * @param {number} datos.id_secretaria
-     * @param {Array}  [datos.reembolsos] — [{ monto, metodo_reembolso, referencia?, banco?, titular?, cedula_titular? }, ...]
-     *   (máx. 2, métodos distintos; referencia/banco/titular/cedula_titular obligatorios si metodo_reembolso = 'Transferencia')
+     * @param {Array}  [datos.reembolsos] — [{ monto, metodo_reembolso, referencia? }, ...]
+     *   Los reembolsos solo se procesan en Efectivo: no se admite Transferencia
+     *   ni reembolso mixto (el dinero sale físicamente de la caja del turno).
      * @param {number} [datos.monto]            — forma antigua (reembolso simple)
      * @param {string} [datos.metodo_reembolso] — forma antigua (reembolso simple)
-     * @param {string} [datos.referencia]       — forma antigua (reembolso simple)
-     * @param {string} [datos.banco]            — forma antigua (reembolso simple)
-     * @param {string} [datos.titular]          — forma antigua (reembolso simple)
-     * @param {string} [datos.cedula_titular]   — forma antigua (reembolso simple)
+     * @param {string} [datos.referencia]       — forma antigua (reembolso simple, opcional)
      * @param {string} datos.motivo
      */
     registrarReembolso: async (datos) => {
@@ -334,40 +332,23 @@ const pagoModule = {
             }
 
             // 3. Validar el arreglo de partes del reembolso
+            //    Los reembolsos solo se procesan en Efectivo (no se admite
+            //    Transferencia ni reembolso mixto): es dinero físico que sale
+            //    de la caja del turno.
             if (!Array.isArray(reembolsos) || reembolsos.length === 0) {
                 throw new Error('Debe indicar al menos una parte de reembolso.');
             }
-            if (reembolsos.length > 2) {
-                throw new Error('Se permiten máximo 2 métodos de reembolso (Efectivo y Transferencia).');
+            if (reembolsos.length > 1) {
+                throw new Error('Los reembolsos solo se procesan en Efectivo; no se admite reembolso mixto ni por Transferencia.');
             }
 
-            const metodosValidos = ['Efectivo', 'Transferencia'];
+            const metodosValidos = ['Efectivo'];
             for (const r of reembolsos) {
                 if (!metodosValidos.includes(r.metodo_reembolso)) {
-                    throw new Error(`Método de reembolso inválido: ${r.metodo_reembolso}. Use Efectivo o Transferencia.`);
+                    throw new Error(`Método de reembolso inválido: ${r.metodo_reembolso}. Los reembolsos solo se procesan en Efectivo.`);
                 }
                 if (!r.monto || parseFloat(r.monto) <= 0) {
                     throw new Error(`El monto para ${r.metodo_reembolso} debe ser mayor a 0.`);
-                }
-                if (r.metodo_reembolso === 'Transferencia') {
-                    if (!r.referencia || r.referencia.trim() === '') {
-                        throw new Error('El número de referencia es obligatorio para reembolsos por Transferencia.');
-                    }
-                    if (!r.banco || r.banco.trim() === '') {
-                        throw new Error('El banco es obligatorio para reembolsos por Transferencia.');
-                    }
-                    if (!r.titular || r.titular.trim() === '') {
-                        throw new Error('El nombre de la persona a quien se transfiere el reembolso es obligatorio para reembolsos por Transferencia.');
-                    }
-                    if (!r.cedula_titular || r.cedula_titular.trim() === '') {
-                        throw new Error('La cédula de la persona a quien se transfiere el reembolso es obligatoria para reembolsos por Transferencia.');
-                    }
-                }
-            }
-            if (reembolsos.length === 2) {
-                const metodos = reembolsos.map(r => r.metodo_reembolso);
-                if (metodos[0] === metodos[1]) {
-                    throw new Error('En un reembolso mixto los dos métodos deben ser diferentes.');
                 }
             }
 
@@ -402,38 +383,26 @@ const pagoModule = {
             }
             const id_cierre = turnoRes.rows[0].id_cierre;
 
-            // 6. Verificar que cada parte del reembolso no supere lo que REALMENTE
-            //    hay disponible en esa forma de pago dentro del turno de caja.
-            //    Esto evita, por ejemplo, reembolsar $50 en efectivo cuando la
-            //    caja del turno solo tiene $25 netos en efectivo.
+            // 6. Verificar que el reembolso no supere lo que REALMENTE hay
+            //    disponible en efectivo dentro del turno de caja. Esto evita,
+            //    por ejemplo, reembolsar $50 cuando la caja del turno solo
+            //    tiene $25 netos en efectivo.
             const resumenTurno = await cajaModule._resumenTurno(id_cierre);
             const disponibleEfectivoTurno = resumenTurno.total_efectivo_sistema - resumenTurno.total_reembolsos_efectivo;
-            const disponibleTransferenciaTurno = resumenTurno.total_transferencia_sistema - resumenTurno.total_reembolsos_transferencia;
 
             for (const r of reembolsos) {
                 const montoR = parseFloat(r.monto);
-                if (r.metodo_reembolso === 'Efectivo' && montoR > disponibleEfectivoTurno + 0.01) {
+                if (montoR > disponibleEfectivoTurno + 0.01) {
                     throw new Error(
                         `No hay suficiente efectivo en caja para este reembolso: se pidió $${montoR.toFixed(2)} pero solo hay $${disponibleEfectivoTurno.toFixed(2)} disponibles en efectivo en el turno actual.`
                     );
                 }
-                if (r.metodo_reembolso === 'Transferencia' && montoR > disponibleTransferenciaTurno + 0.01) {
-                    throw new Error(
-                        `No hay suficiente saldo por transferencia en caja para este reembolso: se pidió $${montoR.toFixed(2)} pero solo hay $${disponibleTransferenciaTurno.toFixed(2)} disponibles por transferencia en el turno actual.`
-                    );
-                }
             }
 
-            // 7. Insertar una fila en `reembolso` por cada parte
+            // 7. Insertar una fila en `reembolso` por cada parte (siempre Efectivo)
             const reembolsosInsertados = [];
             for (const r of reembolsos) {
-                // La tabla `reembolso` ya tiene una columna `referencia` dedicada.
-                // Para transferencias se guarda ahí también el banco y los datos
-                // de quien recibe el reembolso, para poder validarlo después
-                // (mismo criterio que se aplica en registrarPago).
-                const referenciaGuardada = r.metodo_reembolso === 'Transferencia' && r.referencia
-                    ? `${r.referencia.trim().toUpperCase()} - BANCO: ${r.banco.trim().toUpperCase()} - TITULAR: ${r.titular.trim().toUpperCase()} - CI: ${r.cedula_titular.trim()}`
-                    : (r.referencia ? r.referencia.trim().toUpperCase() : null);
+                const referenciaGuardada = r.referencia ? r.referencia.trim().toUpperCase() : null;
                 const insertRes = await client.query(
                     `INSERT INTO reembolso (id_orden, id_secretaria, id_cierre, monto, metodo_reembolso, referencia, motivo)
                      VALUES ($1, $2, $3, $4, $5, $6, $7)

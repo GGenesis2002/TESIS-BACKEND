@@ -248,10 +248,24 @@ registrarPersonal: async (req, res) => {
             const rolesSet = new Set([id_rol, ...(id_roles || [])].filter(Boolean).map(rid => parseInt(rid, 10)));
             const listaRoles = Array.from(rolesSet);
 
-            if (listaRoles.length > 0) {
+            // ── FIX: esta pantalla (GestionUsuarios) solo conoce y administra los
+            // roles de PERSONAL (Administrador=1, Tecnico=2, Especialista=3,
+            // Asistente Analista=4). Antes se desactivaba TODO rol que no viniera
+            // en listaRoles, incluyendo 'Paciente' (id 5) si el usuario también
+            // tenía ese rol — como el frontend nunca lo envía (no está en su
+            // constante ROLES), terminaba apagándose solo, y el usuario
+            // desaparecía silenciosamente del listado de pacientes aunque su
+            // registro en la tabla `paciente` seguía intacto.
+            // Ahora solo tocamos roles dentro de ese universo gestionado por esta
+            // pantalla; cualquier otro rol que el usuario tenga (ej. Paciente)
+            // queda intacto pase lo que pase aquí.
+            const ROLES_GESTIONADOS_AQUI = [1, 2, 3, 4];
+            const rolesADesactivar = ROLES_GESTIONADOS_AQUI.filter(r => !listaRoles.includes(r));
+
+            if (rolesADesactivar.length > 0) {
                 await client.query(
-                    `UPDATE usuario_rol SET activo = FALSE WHERE id_usuario = $1 AND id_rol NOT IN (${listaRoles.join(',')})`,
-                    [id]
+                    `UPDATE usuario_rol SET activo = FALSE WHERE id_usuario = $1 AND id_rol = ANY($2::int[])`,
+                    [id, rolesADesactivar]
                 );
             }
 

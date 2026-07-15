@@ -62,45 +62,10 @@ const pacienteController = {
                     return res.status(400).json({ error: 'Esta cédula ya está registrada como paciente. No se puede crear un nuevo registro.' });
                 }
 
-                // Validar que el correo no choque con OTRO usuario distinto al que reutilizamos
-                const dupCheckCorreo = await client.query(
-                    `SELECT COUNT(*)::int AS correo_existe FROM usuario WHERE correo = $1 AND id_usuario != $2`,
-                    [correo, id_usuario]
-                );
-                if (dupCheckCorreo.rows[0].correo_existe > 0) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ error: 'El correo ya está registrado.' });
-                }
-
-                // El username solo se valida/actualiza si de verdad se va a cambiar
-                // (ver más abajo: solo se toca si viene una contraseña nueva).
-                if (username && username.trim() !== "") {
-                    const dupCheckUsername = await client.query(
-                        `SELECT COUNT(*)::int AS username_existe FROM usuario WHERE username = $1 AND id_usuario != $2`,
-                        [username, id_usuario]
-                    );
-                    if (dupCheckUsername.rows[0].username_existe > 0) {
-                        await client.query('ROLLBACK');
-                        return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
-                    }
-                }
-
-                // NO tocamos username/password si no se envía una contraseña nueva:
-                // mantenemos el login que ya tenía (ej. como personal del laboratorio).
-                if (password && password.trim() !== "") {
-                    const hashedPassword = await bcrypt.hash(password, 10);
-                    await client.query(
-                        `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3, username=$4, password=$5
-                         WHERE id_usuario=$6`,
-                        [nombres, apellidos, correo, username, hashedPassword, id_usuario]
-                    );
-                } else {
-                    await client.query(
-                        `UPDATE usuario SET nombres=$1, apellidos=$2, correo=$3
-                         WHERE id_usuario=$4`,
-                        [nombres, apellidos, correo, id_usuario]
-                    );
-                }
+                // IMPORTANTE: esta cédula ya pertenece a un usuario con otro rol (ej. personal
+                // del laboratorio). NO se editan sus datos de cuenta (nombres, apellidos, correo,
+                // username, password): se mantienen intactos tal cual estaban registrados.
+                // Solo se le suma el rol de Paciente y, más abajo, sus datos propios de paciente.
             } else {
                 // Cédula nueva → validar duplicados de correo/username y crear el usuario desde cero
                 const dupCheck = await client.query(

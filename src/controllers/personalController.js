@@ -83,6 +83,25 @@ registrarPersonal: async (req, res) => {
                 );
             }
         } else {
+            // Cédula nueva → validar duplicados de correo/username antes de crear el usuario desde cero
+            // (mismo patrón que registrarPaciente en pacienteController.js). Sin esto, un choque de
+            // username caía directo en la restricción UNIQUE de la base y el frontend nunca detectaba
+            // el mensaje "usuario ya está en uso" para reintentar con un sufijo numérico.
+            const dupCheck = await client.query(
+                `SELECT
+                    (SELECT COUNT(*) FROM usuario WHERE correo   = $1)::int AS correo_existe,
+                    (SELECT COUNT(*) FROM usuario WHERE username = $2)::int AS username_existe`,
+                [correo, username]
+            );
+            if (dupCheck.rows[0].correo_existe > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: 'El correo ya está registrado.' });
+            }
+            if (dupCheck.rows[0].username_existe > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: 'El nombre de usuario ya está en uso.' });
+            }
+
             // No existe → se crea el usuario desde cero (flujo original)
             const hashedPassword = await bcrypt.hash(password, 10);
             const userRes = await client.query(
@@ -193,6 +212,21 @@ registrarPersonal: async (req, res) => {
             const especialidadesFinal = Array.isArray(especialidades) && especialidades.length > 0
                 ? especialidades
                 : (especialidad ? [especialidad] : ['General']);
+
+            // Validamos que la nueva cédula, correo o username no le pertenezcan
+            // a OTRO usuario distinto al que estamos editando (mismo patrón que
+            // actualizarPaciente en pacienteController.js).
+            const dupCheck = await pool.query(
+                `SELECT
+                    (SELECT COUNT(*) FROM usuario WHERE cedula = $1 AND id_usuario != $4)::int AS cedula_existe,
+                    (SELECT COUNT(*) FROM usuario WHERE correo = $2 AND id_usuario != $4)::int AS correo_existe,
+                    (SELECT COUNT(*) FROM usuario WHERE username = $3 AND id_usuario != $4)::int AS username_existe`,
+                [cedula, correo, username, id]
+            );
+
+            if (dupCheck.rows[0].cedula_existe > 0) return res.status(400).json({ error: 'La cédula ya está registrada en otro usuario.' });
+            if (dupCheck.rows[0].correo_existe > 0) return res.status(400).json({ error: 'El correo ya está registrado en otro usuario.' });
+            if (dupCheck.rows[0].username_existe > 0) return res.status(400).json({ error: 'El nombre de usuario ya está en uso por otro usuario.' });
 
             await client.query('BEGIN');
 

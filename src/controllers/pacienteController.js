@@ -45,8 +45,22 @@ const pacienteController = {
             let id_usuario;
 
             if (existente.length > 0) {
-                // Ya existe → reutilizamos el mismo usuario y solo le sumamos el rol de Paciente.
+                // Ya existe → reutilizamos el mismo usuario y solo le sumamos el rol de Paciente,
+                // PERO primero verificamos que esa cédula NO sea YA un Paciente activo.
+                // Esta es la garantía real (no solo la del frontend): nunca se debe poder
+                // duplicar/re-registrar a alguien que ya tiene el rol Paciente.
                 id_usuario = existente[0].id_usuario;
+
+                const { rows: yaEsPaciente } = await client.query(
+                    `SELECT 1 FROM usuario_rol ur
+                     JOIN rol r ON r.id_rol = ur.id_rol
+                     WHERE ur.id_usuario = $1 AND r.nombre = 'Paciente' AND ur.activo = TRUE`,
+                    [id_usuario]
+                );
+                if (yaEsPaciente.length > 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'Esta cédula ya está registrada como paciente. No se puede crear un nuevo registro.' });
+                }
 
                 // Validar que el correo no choque con OTRO usuario distinto al que reutilizamos
                 const dupCheckCorreo = await client.query(

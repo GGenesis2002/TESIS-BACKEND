@@ -804,7 +804,7 @@ getCierresCaja: async (req, res) => {
                     COUNT(*)                                                                   AS num_reembolsos
                 FROM reembolso WHERE reembolso.id_cierre = cc.id_cierre
             ) r ON TRUE
-            WHERE cc.fecha_apertura::date BETWEEN $1 AND $2
+            WHERE (cc.fecha_apertura AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
               AND (
                     $3::text IS NULL
                     OR u.nombres   ILIKE '%' || $3 || '%'

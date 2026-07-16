@@ -6,6 +6,8 @@ const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 
 // Rutas públicas
 router.post('/registro', controller.registrarPaciente);
+// Verificación pública de cédula para el registro desde el app (sin datos personales)
+router.get('/verificar-cedula/:cedula', controller.verificarCedulaPublico);
 
 // Perfil propio (el paciente edita su cuenta desde el app)
 router.get('/perfil',  verifyToken, controller.obtenerPerfilPropio);

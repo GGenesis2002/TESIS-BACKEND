@@ -167,6 +167,42 @@ const pacienteController = {
         }
     },
 
+    // ── VERIFICAR CÉDULA (público, para el registro desde el app móvil) ──────
+    // A diferencia de consultarPorCedula (protegida, usada por admin/secretaria
+    // y que sí devuelve datos personales), esta es de acceso público porque el
+    // paciente que se está registrando todavía no tiene sesión. Por eso SOLO
+    // devuelve dos booleanos y nada de información personal (nombres, correo,
+    // teléfono, username, etc.), para no filtrar datos de terceros a cualquiera
+    // que pruebe cédulas ajenas desde la pantalla de registro.
+    verificarCedulaPublico: async (req, res) => {
+        try {
+            const { cedula } = req.params;
+            if (!/^\d{10}$/.test(cedula)) {
+                return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos.' });
+            }
+            const { rows } = await pool.query(
+                `SELECT u.id_usuario,
+                        EXISTS (
+                            SELECT 1 FROM usuario_rol ur
+                            JOIN rol r ON r.id_rol = ur.id_rol
+                            WHERE ur.id_usuario = u.id_usuario
+                              AND r.nombre = 'Paciente'
+                              AND ur.activo = TRUE
+                        ) AS es_paciente
+                 FROM usuario u
+                 WHERE u.cedula = $1`,
+                [cedula]
+            );
+
+            if (rows.length === 0) {
+                return res.json({ existe: false, esPaciente: false });
+            }
+            return res.json({ existe: true, esPaciente: rows[0].es_paciente === true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
+
     // ── CONSULTAR POR CÉDULA (uso interno, para autocompletar el formulario) ──
     // No es la consulta al SRI (esa es /documento/consultar/:cedula). Esta busca
     // en NUESTRA base si la cédula ya pertenece a un usuario existente (por ej.

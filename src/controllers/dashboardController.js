@@ -229,7 +229,16 @@ const dashboardController = {
     //  - Si quien consulta NO tiene ese perfil (p. ej. el administrador), se mantiene
     //    el comportamiento global de siempre (todas las secretarias), que es lo que
     //    consume Admindashboard.jsx.
-getArqueoCajaHoy: async (req, res) => {
+    //
+    // ⚠️ FIX: además de los totales agregados, ahora también se devuelve
+    // "movimientos": el listado individual de cada pago/reembolso del rango
+    // (unión de las tablas pago y reembolso). Antes solo se calculaban SUMs
+    // y nunca se seleccionaban las filas individuales, por lo que el
+    // frontend (Dashboardasistente.jsx) siempre recibía movimientos = undefined
+    // y mostraba "No hay movimientos detallados disponibles todavía." aunque
+    // sí existieran registros — los totales cuadraban, pero el detalle no
+    // se enviaba nunca.
+    getArqueoCajaHoy: async (req, res) => {
     try {
         const hoyISO = getHoyLocal(); // Función que ya tienes para fecha local
         const desde  = req.query.desde || hoyISO;
@@ -269,7 +278,7 @@ getArqueoCajaHoy: async (req, res) => {
             }
         }
 
-        // 3. CONSULTA SQL
+        // 3. CONSULTA SQL — TOTALES
         // La magia está en: ($3::int IS NULL OR t.id_secretaria = $3)
         // Si $3 es NULL (Admin), la condición siempre es verdadera y trae todo.
         // Si $3 tiene un ID (Asistente), filtra solo sus registros.
@@ -297,13 +306,67 @@ getArqueoCajaHoy: async (req, res) => {
         const resTotales = await pool.query(queryTotales, [desde, hasta, id_secretaria_filtro]);
         const totales = resTotales.rows[0];
 
+        // 4. CONSULTA SQL — MOVIMIENTOS INDIVIDUALES (detalle expandible del modal)
+        // ⚠️ AJUSTA los nombres de columna si en tu esquema real difieren:
+        //    - pago.id_orden / reembolso.id_orden → para obtener el numero_ticket
+        //    - pago.id_usuario / reembolso.id_usuario → si no existen estas columnas,
+        //      reemplaza el JOIN de "u" por el mismo patrón que usa getArqueoPorUsuario
+        //      (id_secretaria → asistente_analista → usuario) para saber quién cobró.
+        const queryMovimientos = `
+            SELECT
+                t.origen,
+                t.metodo,
+                t.monto,
+                t.fecha,
+                om.numero_ticket,
+                CONCAT(u.nombres, ' ', u.apellidos) AS usuario
+            FROM (
+                SELECT
+                    'pago' AS origen,
+                    metodo_pago AS metodo,
+                    monto,
+                    fecha_pago AS fecha,
+                    id_secretaria,
+                    id_orden
+                FROM pago
+                UNION ALL
+                SELECT
+                    'reembolso' AS origen,
+                    metodo_reembolso AS metodo,
+                    monto,
+                    fecha_reembolso AS fecha,
+                    id_secretaria,
+                    id_orden
+                FROM reembolso
+            ) t
+            LEFT JOIN orden_medica       om ON om.id_orden       = t.id_orden
+            LEFT JOIN asistente_analista aa ON aa.id_secretaria  = t.id_secretaria
+            LEFT JOIN usuario            u  ON u.id_usuario      = aa.id_usuario
+            WHERE t.fecha::date BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR t.id_secretaria = $3)
+            ORDER BY t.fecha DESC
+            LIMIT 200
+        `;
+
+        const resMovimientos = await pool.query(queryMovimientos, [desde, hasta, id_secretaria_filtro]);
+
+        const movimientos = resMovimientos.rows.map(m => ({
+            usuario: m.usuario ? m.usuario.trim() : 'Usuario N/D',
+            tipo:    m.origen,           // "pago" | "reembolso"
+            metodo:  m.metodo,
+            monto:   parseFloat(m.monto),
+            hora:    m.fecha,
+            ticket:  m.numero_ticket,
+        }));
+
         res.json({
             efectivo: parseFloat(totales.efectivo),
             transferencia: parseFloat(totales.transferencia),
             efectivo_cobrado: parseFloat(totales.efectivo_cobrado),
             reembolsos_efectivo: parseFloat(totales.reembolsos_efectivo),
             transferencia_cobrada: parseFloat(totales.transferencia_cobrada),
-            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia)
+            reembolsos_transferencia: parseFloat(totales.reembolsos_transferencia),
+            movimientos
         });
 
     } catch (e) {

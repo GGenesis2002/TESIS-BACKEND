@@ -5,6 +5,34 @@ const pool = require('../config/db');
 const { getConfig } = require('./configuracionController');
 const { registrarAuditoria } = require('../helpers/auditoria');
 
+// ─── Resuelve el ROL ACTIVO de la sesión (no todos los roles de la cuenta) ───
+// Una cuenta puede tener varios roles (Administrador + Paciente, por ejemplo).
+// req.user.roles trae TODOS esos roles, así que nunca sirve para saber con
+// cuál perfil se inició sesión ahora. El rol activo real viaja en el header
+// x-id-usuario-rol (ver authMiddleware), y aquí lo traducimos a su nombre.
+//
+// Fallback: si el cliente no mandó el header (apps viejas) pero la cuenta
+// solo tiene un rol, usamos ese único rol para no romper compatibilidad.
+const resolverRolActivo = async (req) => {
+    const idUsuarioRol = req.user.id_usuario_rol;
+
+    if (idUsuarioRol) {
+        const { rows } = await pool.query(
+            `SELECT r.nombre
+             FROM usuario_rol ur
+             JOIN rol r ON ur.id_rol = r.id_rol
+             WHERE ur.id_usuario_rol = $1`,
+            [idUsuarioRol]
+        );
+        if (rows.length > 0) return rows[0].nombre;
+    }
+
+    const rolesCuenta = req.user.roles || [];
+    if (rolesCuenta.length === 1) return rolesCuenta[0];
+
+    return null; // Ambiguo: varios roles y sin header -> no se puede determinar
+};
+
 const ordenController = {
     // 1. PACIENTE / SECRETARIA: Crea una orden
    crearPorPaciente: async (req, res) => {
@@ -13,7 +41,7 @@ const ordenController = {
     try {
         const cfg = await getConfig();
         const { examenes, id_paciente: idPacienteBody } = req.body;
-        const roles = req.user.roles || [];
+        const rolActivo = await resolverRolActivo(req);
 
         if (!examenes || !Array.isArray(examenes) || examenes.length === 0) {
             return res.status(400).json({ error: "Debe enviar al menos un examen." });
@@ -29,7 +57,7 @@ const ordenController = {
 
         let id_paciente;
 
-        if (roles.includes('Paciente')) {
+        if (rolActivo === 'Paciente') {
             // ✅ Paciente: ignorar lo que manda el cliente, resolver desde el JWT
             const pacRes = await pool.query(
                 'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
@@ -41,11 +69,7 @@ const ordenController = {
             id_paciente = pacRes.rows[0].id_paciente;
 
         } else if (
-    roles.includes('Secretaria') ||
-    roles.includes('Administrador') ||
-    roles.includes('Técnico') ||
-    roles.includes('Especialista') ||
-    roles.includes('Asistente Analista')
+    ['Secretaria', 'Administrador', 'Técnico', 'Especialista', 'Asistente Analista'].includes(rolActivo)
 ) {
             // ✅ Secretaria/Admin: usa el id_paciente que manda el body (es para otro paciente)
             if (!idPacienteBody) {
@@ -394,10 +418,10 @@ const ordenController = {
     listar: async (req, res) => {
         try {
             const { estado } = req.query;
-            const roles = req.user.roles || [];
+            const rolActivo = await resolverRolActivo(req);
 
             // ── Si el que consulta es un Paciente, solo devolver SUS órdenes ──
-            if (roles.includes('Paciente')) {
+            if (rolActivo === 'Paciente') {
                 const pacRes = await pool.query(
                     'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
                     [req.user.id]
@@ -469,10 +493,10 @@ const ordenController = {
             }
 
             const estadoActual = check.rows[0].estado;
-            const roles = req.user.roles || [];
+            const rolActivo = await resolverRolActivo(req);
 
             // 2. Si es Paciente, solo puede eliminar sus propias órdenes
-            if (roles.includes('Paciente')) {
+            if (rolActivo === 'Paciente') {
                 const pacRes = await pool.query(
                     'SELECT id_paciente FROM paciente WHERE id_usuario = $1',
                     [req.user.id]

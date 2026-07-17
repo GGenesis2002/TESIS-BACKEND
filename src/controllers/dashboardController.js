@@ -600,12 +600,36 @@ const dashboardController = {
   
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /dashboard/ordenes-por-usuario
-// Devuelve las órdenes de hoy agrupadas por el usuario que las creó
+// Devuelve las órdenes agrupadas por el usuario real que las creó, sea:
+//   - un Asistente/Analista generándolas desde el sistema web (canal "Sistema Web")
+//   - el propio Paciente generándolas desde el aplicativo móvil (canal "App Móvil"),
+//     caso en el que o.id_secretaria queda NULL.
+//
+// Filtros vía query string:
+//   (sin parámetros)          -> solo las órdenes de HOY
+//   ?desde=YYYY-MM-DD&hasta=  -> rango de fechas
+//   ?historico=true           -> todas las órdenes del sistema (sin filtro de fecha)
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /dashboard/ordenes-por-usuario
 getOrdenesPorUsuario: async (req, res) => {
     try {
         const hoy = getHoyLocal();
+        const { desde, hasta, historico } = req.query;
+
+        let whereFecha = '';
+        let params = [];
+
+        if (historico === 'true') {
+            // Sin filtro de fecha: histórico completo del sistema
+            whereFecha = '';
+        } else if (desde || hasta) {
+            const fDesde = desde || hasta;
+            const fHasta = hasta || desde;
+            whereFecha = 'WHERE o.fecha_orden::date BETWEEN $1 AND $2';
+            params = [fDesde, fHasta];
+        } else {
+            whereFecha = 'WHERE o.fecha_orden::date = $1';
+            params = [hoy];
+        }
 
         const result = await pool.query(`
             SELECT
@@ -614,13 +638,30 @@ getOrdenesPorUsuario: async (req, res) => {
                 o.estado,
                 o.fecha_orden,
                 COALESCE(o.total, 0)                                 AS total,
-                CONCAT(up.nombres, ' ', up.apellidos)                AS paciente,
-                CONCAT(uu.nombres, ' ', uu.apellidos)                AS nombre_usuario,
-                uu.username                                          AS username,
-                ur1.rol                                              AS rol
+                CONCAT(pu.nombres, ' ', pu.apellidos)                AS paciente,
+
+                -- Usuario real que generó la orden: asistente (web) o el propio paciente (app)
+                CASE
+                    WHEN aa.id_secretaria IS NOT NULL
+                        THEN CONCAT(uu.nombres, ' ', uu.apellidos)
+                    ELSE CONCAT(pu.nombres, ' ', pu.apellidos)
+                END                                                  AS nombre_usuario,
+                CASE
+                    WHEN aa.id_secretaria IS NOT NULL THEN uu.username
+                    ELSE pu.username
+                END                                                  AS username,
+                CASE
+                    WHEN aa.id_secretaria IS NOT NULL THEN COALESCE(ur1.rol, 'Sin rol')
+                    ELSE 'Paciente'
+                END                                                  AS rol,
+                CASE
+                    WHEN aa.id_secretaria IS NOT NULL THEN 'Sistema Web'
+                    ELSE 'App Móvil'
+                END                                                  AS canal
+
             FROM orden_medica o
             LEFT JOIN paciente          p   ON o.id_paciente   = p.id_paciente
-            LEFT JOIN usuario           up  ON p.id_usuario    = up.id_usuario
+            LEFT JOIN usuario           pu  ON p.id_usuario    = pu.id_usuario
             LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
             LEFT JOIN usuario           uu  ON aa.id_usuario   = uu.id_usuario
             LEFT JOIN LATERAL (
@@ -632,29 +673,37 @@ getOrdenesPorUsuario: async (req, res) => {
                 ORDER BY ur.id_usuario_rol DESC
                 LIMIT 1
             ) ur1 ON TRUE
-            WHERE o.fecha_orden::date = $1
-            ORDER BY uu.nombres ASC, o.fecha_orden DESC
-        `, [hoy]);
+            ${whereFecha}
+            ORDER BY nombre_usuario ASC, o.fecha_orden DESC
+        `, params);
 
         const mapa = {};
         for (const row of result.rows) {
-            const key = row.username || 'sin_usuario';
+            // Clave de agrupación: username real (asistente o paciente).
+            // Si por algún motivo no hay username, se agrupa por id_orden para no mezclar usuarios distintos.
+            const key = row.username || `sin_usuario_${row.id_orden}`;
             if (!mapa[key]) {
                 mapa[key] = {
-                    usuario: row.nombre_usuario || 'Usuario desconocido',
+                    usuario: row.nombre_usuario ? row.nombre_usuario.trim() : 'Usuario desconocido',
                     username: row.username,
                     rol: row.rol || 'Sin rol',
+                    canal: row.canal,
                     ordenes: [],
+                    total_ordenes: 0,
+                    total_recaudado: 0,
                 };
             }
+            const total = parseFloat(row.total);
             mapa[key].ordenes.push({
                 id_orden:      row.id_orden,
                 numero_ticket: row.numero_ticket,
                 estado:        row.estado,
                 fecha_orden:   row.fecha_orden,
-                total:         parseFloat(row.total),
+                total:         total,
                 paciente:      row.paciente ? row.paciente.trim() : '—',
             });
+            mapa[key].total_ordenes  += 1;
+            mapa[key].total_recaudado = parseFloat((mapa[key].total_recaudado + total).toFixed(2));
         }
 
         res.json(Object.values(mapa));

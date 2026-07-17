@@ -640,29 +640,31 @@ getOrdenesPorUsuario: async (req, res) => {
                 COALESCE(o.total, 0)                                 AS total,
                 CONCAT(pu.nombres, ' ', pu.apellidos)                AS paciente,
 
-                -- Usuario real que generó la orden: asistente (web) o el propio paciente (app)
+                -- Regla: si la orden TIENE id_secretaria -> se generó en el Sistema Web
+                --        (sin importar si el JOIN a asistente_analista logra resolver el nombre).
+                --        Si NO tiene id_secretaria -> se generó desde el App Móvil (el paciente).
                 CASE
-                    WHEN aa.id_secretaria IS NOT NULL
-                        THEN CONCAT(uu.nombres, ' ', uu.apellidos)
+                    WHEN o.id_secretaria IS NOT NULL
+                        THEN COALESCE(CONCAT(uu.nombres, ' ', uu.apellidos), 'Asistente (sin datos)')
                     ELSE CONCAT(pu.nombres, ' ', pu.apellidos)
                 END                                                  AS nombre_usuario,
                 CASE
-                    WHEN aa.id_secretaria IS NOT NULL THEN uu.username
+                    WHEN o.id_secretaria IS NOT NULL THEN COALESCE(uu.username, CONCAT('sec_', o.id_secretaria::text))
                     ELSE pu.username
                 END                                                  AS username,
                 CASE
-                    WHEN aa.id_secretaria IS NOT NULL THEN COALESCE(ur1.rol, 'Sin rol')
+                    WHEN o.id_secretaria IS NOT NULL THEN COALESCE(ur1.rol, 'Sin rol')
                     ELSE 'Paciente'
                 END                                                  AS rol,
                 CASE
-                    WHEN aa.id_secretaria IS NOT NULL THEN 'Sistema Web'
+                    WHEN o.id_secretaria IS NOT NULL THEN 'Sistema Web'
                     ELSE 'App Móvil'
                 END                                                  AS canal
 
             FROM orden_medica o
             LEFT JOIN paciente          p   ON o.id_paciente   = p.id_paciente
             LEFT JOIN usuario           pu  ON p.id_usuario    = pu.id_usuario
-            LEFT JOIN asistente_analista aa ON o.id_secretaria = aa.id_secretaria
+            LEFT JOIN asistente_analista aa ON o.id_secretaria::text = aa.id_secretaria::text
             LEFT JOIN usuario           uu  ON aa.id_usuario   = uu.id_usuario
             LEFT JOIN LATERAL (
                 SELECT r.nombre AS rol

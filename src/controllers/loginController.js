@@ -59,7 +59,7 @@ const login = async (req, res) => {
                     <p>Por seguridad, tu cuenta ha sido <strong>bloqueada temporalmente durante 5 minutos</strong>.</p>
                     <p>Si fuiste tú, simplemente espera ese tiempo e inténtalo de nuevo. Si <strong>no reconoces
                     estos intentos</strong>, te recomendamos cambiar tu contraseña lo antes posible desde la opción
-                    "¿Olvidaste tu contraseña?".</p>
+                    "¿Olvidaste tu contraseña?" o dentro de la opcion de perfil.</p>
                     <p>— Laboratorio Clínico Garófalo</p>
                 `;
 

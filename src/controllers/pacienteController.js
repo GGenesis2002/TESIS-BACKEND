@@ -292,7 +292,7 @@ const pacienteController = {
                 req.user.id,
                 req.user.id_usuario_rol,
                 'ACTUALIZAR_PACIENTE',
-                `Editó datos del paciente ID: ${id}, Nueva Cédula: ${cedula}${nuevaPassword !== "" ? " (contraseña restablecida por el administrador)" : ""}`
+                `Editó datos del paciente ID: ${id}`
             );
 
             await client.query('COMMIT');

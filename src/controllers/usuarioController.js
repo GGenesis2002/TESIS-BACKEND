@@ -11,6 +11,18 @@ const usuarioController = {
             res.json(data);
         } catch (e) { res.status(500).json({ error: e.message }); }
     },
+// NUEVO: Perfil del usuario logueado
+    obtenerPerfil: async (req, res) => {
+        try {
+            const usuario = await Usuario.getById(req.user.id);
+            if (!usuario) {
+                return res.status(404).json({ msg: "Usuario no encontrado" });
+            }
+            res.json(usuario);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
 
     // 1. Cambiar contraseña
     actualizarPassword: async (req, res) => {

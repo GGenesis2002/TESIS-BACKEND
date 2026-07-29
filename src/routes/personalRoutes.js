@@ -12,6 +12,6 @@ router.get('/', verifyToken, checkRole(STAFF_RRHH), personalController.listarPer
 router.get('/consultar-cedula/:cedula', verifyToken, checkRole(STAFF_RRHH), personalController.consultarPorCedula);
 router.get('/:id', verifyToken, checkRole(STAFF_RRHH, ROLES.ESPECIALISTA, ROLES.ASISTENTE), personalController.obtenerEmpleado);
 router.post('/registro', verifyToken, checkRole(STAFF_RRHH), personalController.registrarPersonal);
-router.put('/:id', verifyToken, checkRole(STAFF_RRHH,ROLES.ESPECIALISTA, ROLES.ASISTENTE), personalController.actualizarPersonal);
+router.put('/:id', verifyToken, checkRole(STAFF_RRHH, ROLES.ESPECIALISTA, ROLES.ASISTENTE), personalController.actualizarPersonal);
 
 module.exports = router;

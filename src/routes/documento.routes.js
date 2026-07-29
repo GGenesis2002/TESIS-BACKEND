@@ -20,6 +20,7 @@
 // Agrega esto a tu backend, por ejemplo como routes/documento.routes.js,
 // y móntalo en tu app principal con:
 //   app.use("/documento", require("./routes/documento.routes"));
+const { verifyToken } = require("../middlewares/authMiddleware");
 
 const express = require("express");
 const axios = require("axios");
@@ -41,7 +42,7 @@ function separarNombreCompleto(razonSocial) {
   };
 }
 
-router.get("/consultar/:cedula", async (req, res) => {
+router.get("/consultar/:cedula", verifyToken, async (req, res) => {
   const { cedula } = req.params;
 
   if (!/^\d{10}$/.test(cedula)) {

@@ -1,20 +1,19 @@
 const router    = require('express').Router();
 const pool      = require('../config/db');
 const multer    = require('multer');
-const supabase  = require('../config/supabaseStorage'); // ← tu cliente ya existente
+const supabase  = require('../config/supabaseStorage');
 const resultadoController = require('../controllers/resultadoController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const ROLES = require('../config/roles');
 
 const BUCKET = process.env.SUPABASE_BUCKET || 'pdfs';
 
-// ── Multer en memoria para PDFs (distinto al multer.js de imágenes) ──
 const uploadPDF = multer({
     storage: multer.memoryStorage(),
     fileFilter: (req, file, cb) => cb(null, file.mimetype === 'application/pdf'),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
 });
 
-// ── Helper: sube buffer a Supabase y devuelve la URL pública ──
 async function subirPDFaSupabase(buffer, fileName) {
     const { error } = await supabase.storage
         .from(BUCKET)
@@ -26,14 +25,20 @@ async function subirPDFaSupabase(buffer, fileName) {
     return data.publicUrl;
 }
 
+// "Ingreso y firma de resultados de los exámenes asignados" → Especialista
+const ESPECIALISTA_ONLY = [ROLES.ESPECIALISTA];
+// "Validación de resultados médicos" → Administrador
+const ADMIN_ONLY = [ROLES.ADMIN];
+const PACIENTE_ONLY = [ROLES.PACIENTE];
+
 // ── Especialista ──
-router.post('/guardar-valor',          verifyToken, resultadoController.gestionarValor);
-router.put('/enviar-revision/:id',     verifyToken, resultadoController.enviarRevisionV2);
-router.get('/mis-ordenes',             verifyToken, resultadoController.misOrdenes);
-router.get('/detalle-orden/:id_orden', verifyToken, resultadoController.detalleOrden);
+router.post('/guardar-valor',          verifyToken, checkRole(ESPECIALISTA_ONLY), resultadoController.gestionarValor);
+router.put('/enviar-revision/:id',     verifyToken, checkRole(ESPECIALISTA_ONLY), resultadoController.enviarRevisionV2);
+router.get('/mis-ordenes',             verifyToken, checkRole(ESPECIALISTA_ONLY), resultadoController.misOrdenes);
+router.get('/detalle-orden/:id_orden', verifyToken, checkRole(ESPECIALISTA_ONLY), resultadoController.detalleOrden);
 
 // ── Subir PDF de examen (especialista) → Supabase Storage ──
-router.post('/subir-pdf', verifyToken, uploadPDF.single('pdf'), async (req, res) => {
+router.post('/subir-pdf', verifyToken, checkRole(ESPECIALISTA_ONLY), uploadPDF.single('pdf'), async (req, res) => {
     try {
         const { id_resultado } = req.body;
         if (!req.file)
@@ -50,12 +55,12 @@ router.post('/subir-pdf', verifyToken, uploadPDF.single('pdf'), async (req, res)
         res.json({ pdf_url });
     } catch (e) {
         console.error('❌ /subir-pdf:', e.message);
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ error: 'No se pudo procesar el archivo.' }); // sin filtrar detalle interno
     }
 });
 
 // ── Subir PDF de orden completa (admin) → Supabase Storage ──
-router.post('/subir-pdf-orden', verifyToken, uploadPDF.single('pdf_orden'), async (req, res) => {
+router.post('/subir-pdf-orden', verifyToken, checkRole(ADMIN_ONLY), uploadPDF.single('pdf_orden'), async (req, res) => {
     try {
         const { id_orden } = req.body;
         if (!req.file)
@@ -72,17 +77,20 @@ router.post('/subir-pdf-orden', verifyToken, uploadPDF.single('pdf_orden'), asyn
         res.json({ pdf_url });
     } catch (e) {
         console.error('❌ /subir-pdf-orden:', e.message);
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ error: 'No se pudo procesar el archivo.' });
     }
 });
 
 // ── Admin ──
-router.get('/admin/ordenes',                  verifyToken, resultadoController.ordenesParaAdmin);
-router.get('/admin/orden/:id_orden',          verifyToken, resultadoController.detalleOrdenAdmin);
-router.put('/devolver/:id_resultado',         verifyToken, resultadoController.devolverEspecialista);
-router.put('/devolver-parametro/:id_detalle', verifyToken, resultadoController.devolverParametro);
-router.put('/publicar/:id_resultado',         verifyToken, resultadoController.publicarFinal);
+router.get('/admin/ordenes',                  verifyToken, checkRole(ADMIN_ONLY), resultadoController.ordenesParaAdmin);
+router.get('/admin/orden/:id_orden',          verifyToken, checkRole(ADMIN_ONLY), resultadoController.detalleOrdenAdmin);
+router.put('/devolver/:id_resultado',         verifyToken, checkRole(ADMIN_ONLY), resultadoController.devolverEspecialista);
+router.put('/devolver-parametro/:id_detalle', verifyToken, checkRole(ADMIN_ONLY), resultadoController.devolverParametro);
+router.put('/publicar/:id_resultado',         verifyToken, checkRole(ADMIN_ONLY), resultadoController.publicarFinal);
 
-router.get('/paciente/ordenes',              verifyToken, resultadoController.ordenesDelPaciente);
-router.get('/paciente/orden/:id_orden',      verifyToken, resultadoController.detalleOrdenPaciente);
+// ── Paciente ──
+
+router.get('/paciente/ordenes',              verifyToken, checkRole(PACIENTE_ONLY), resultadoController.ordenesDelPaciente);
+router.get('/paciente/orden/:id_orden',      verifyToken, checkRole(PACIENTE_ONLY), resultadoController.detalleOrdenPaciente);
+
 module.exports = router;

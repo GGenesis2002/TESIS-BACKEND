@@ -1,92 +1,52 @@
 const express = require('express');
 const router = express.Router();
 const dashboardController = require('../controllers/dashboardController');
-
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const ROLES = require('../config/roles');
+
+const FINANZAS = [ROLES.ADMIN, ROLES.ASISTENTE]; // caja, pagos, órdenes del día
 
 // ─── ESTADÍSTICAS PRINCIPALES POR ROL ────────────────────────────────────────
 
 /**
  * @route   GET /api/dashboard/admin
- * @desc    Obtiene las estadísticas y KPIs para el administrador
  */
-router.get('/admin', verifyToken, dashboardController.getAdminStats);
+router.get('/admin', verifyToken, checkRole([ROLES.ADMIN]), dashboardController.getAdminStats);
 
 /**
  * @route   GET /api/dashboard/secretaria
- * @desc    Obtiene las estadísticas para Secretaría / Asistente Analista
  */
-router.get('/secretaria', verifyToken, dashboardController.getAsistenAnalistaStats);
+router.get('/secretaria', verifyToken, checkRole([ROLES.ADMIN, ROLES.ASISTENTE]), dashboardController.getAsistenAnalistaStats);
 
 /**
  * @route   GET /api/dashboard/tecnico
- * @desc    Obtiene métricas del sistema, estado de BD y logs para el perfil Técnico
  */
-router.get('/tecnico', verifyToken, dashboardController.getTecnicoStats);
+router.get('/tecnico', verifyToken, checkRole([ROLES.ADMIN, ROLES.TECNICO]), dashboardController.getTecnicoStats);
 
 
 // ─── REPORTES Y FINANZAS ─────────────────────────────────────────────────────
 
-/**
- * @route   GET /api/dashboard/secretaria/reporte
- * @desc    Descarga segura de reportes mensuales en formato CSV
- */
-router.get('/secretaria/reporte', verifyToken, dashboardController.descargarReporteMensual);
-
-/**
- * @route   GET /api/dashboard/arqueo-hoy
- * @desc    Obtiene el desglose de ingresos del día (Efectivo, Transferencia, Tarjeta)
- */
-router.get('/arqueo-hoy', verifyToken, dashboardController.getArqueoCajaHoy);
-
-/**
- * @route   GET /api/dashboard/arqueo-por-usuario
- * @desc    Desglose del arqueo del día por usuario y método de pago (drill-down del modal)
- */
-router.get('/arqueo-por-usuario', verifyToken, dashboardController.getArqueoPorUsuario);
-
-/**
- * @route   GET /api/dashboard/cierres-caja
- * @desc    Arqueo de caja profundo: listado turno por turno (cierre_caja) con
- *          filtro de fecha (?desde=&hasta=) y búsqueda por cajero (?q=),
- *          incluye resumen de descuadres, tendencia de diferencias y ranking por cajero
- */
-router.get('/cierres-caja', verifyToken, dashboardController.getCierresCaja);
-
-/**
- * @route   GET /api/dashboard/cierres-caja/:id
- * @desc    Detalle imprimible de un cierre puntual: cabecera + pagos + reembolsos del turno
- */
-router.get('/cierres-caja/:id', verifyToken, dashboardController.getDetalleCierreCaja);
+router.get('/secretaria/reporte', verifyToken, checkRole(FINANZAS), dashboardController.descargarReporteMensual);
+router.get('/arqueo-hoy', verifyToken, checkRole(FINANZAS), dashboardController.getArqueoCajaHoy);
+router.get('/arqueo-por-usuario', verifyToken, checkRole(FINANZAS), dashboardController.getArqueoPorUsuario);
+router.get('/cierres-caja', verifyToken, checkRole(FINANZAS), dashboardController.getCierresCaja);
+router.get('/cierres-caja/:id', verifyToken, checkRole(FINANZAS), dashboardController.getDetalleCierreCaja);
 
 
 // ─── ENDPOINTS DE DRILL-DOWN (DETALLES DEL DASHBOARD) ────────────────────────
 
-/**
- * @route   GET /api/dashboard/ordenes-por-usuario
- * @desc    Devuelve las órdenes de hoy agrupadas por el usuario que las creó
- */
-router.get('/ordenes-por-usuario', verifyToken, dashboardController.getOrdenesPorUsuario);
-
-/**
- * @route   GET /api/dashboard/ingresos-por-usuario
- * @desc    Devuelve el total acumulado y cantidad de órdenes generadas hoy por usuario
- */
-router.get('/ingresos-por-usuario', verifyToken, dashboardController.getIngresosPorUsuario);
+router.get('/ordenes-por-usuario', verifyToken, checkRole(FINANZAS), dashboardController.getOrdenesPorUsuario);
+router.get('/ingresos-por-usuario', verifyToken, checkRole(FINANZAS), dashboardController.getIngresosPorUsuario);
 
 
 // ─── AUDITORÍA Y ALERTAS ─────────────────────────────────────────────────────
 
 /**
  * @route   GET /api/dashboard/auditoria
- * @desc    Historial y bitácora de acciones del sistema con filtro de fechas
+ * @desc    Historial y bitácora → información sensible del sistema, solo Admin.
  */
-router.get('/auditoria', verifyToken, dashboardController.getAuditoria);
+router.get('/auditoria', verifyToken, checkRole([ROLES.ADMIN]), dashboardController.getAuditoria);
 
-/**
- * @route   GET /api/dashboard/alertas
- * @desc    Redirección temporal hacia el módulo central de notificaciones
- */
 router.get('/alertas', verifyToken, (req, res) => {
     res.redirect(307, '/api/notificaciones');
 });
@@ -94,16 +54,7 @@ router.get('/alertas', verifyToken, (req, res) => {
 
 // ─── MODALES DE DRILL-DOWN ────────────────────────────────────────────────────
 
-/**
- * @route   GET /api/dashboard/resultados-criticos
- * @desc    Lista de resultados con valores fuera del rango de referencia
- */
-router.get('/resultados-criticos', verifyToken, dashboardController.getResultadosCriticos);
-
-/**
- * @route   GET /api/dashboard/usuarios-activos-hoy
- * @desc    Lista de usuarios que iniciaron sesión hoy
- */
-router.get('/usuarios-activos-hoy', verifyToken, dashboardController.getUsuariosActivosHoy);
+router.get('/resultados-criticos', verifyToken, checkRole([ROLES.ADMIN, ROLES.ESPECIALISTA]), dashboardController.getResultadosCriticos);
+router.get('/usuarios-activos-hoy', verifyToken, checkRole([ROLES.ADMIN]), dashboardController.getUsuariosActivosHoy);
 
 module.exports = router;

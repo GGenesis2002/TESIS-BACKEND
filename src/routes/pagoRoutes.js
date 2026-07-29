@@ -2,26 +2,17 @@ const express = require('express');
 const router = express.Router();
 const pagoController = require('../controllers/pagoController');
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const ROLES = require('../config/roles');
 
+// "Cobros/pagos" está asignado a Asistente Analista (Secretaria); Administrador
+// necesita verlo todo para supervisión.
+const CAJA = [ROLES.ADMIN, ROLES.ASISTENTE];
 
-// POST /pagos/procesar — Registra el cobro de una orden
-router.post('/procesar', verifyToken, pagoController.procesarCobro);
-
-// GET /pagos/hoy — Reporte de pagos del día (cierre de caja)
-router.get('/hoy', verifyToken, pagoController.verPagosHoy);
-
-// GET /pagos/ordenes-generadas — Órdenes pendientes de cobro para la vista de caja
-// (el frontend antes hacía GET /ordenes?estado=Generada; ahora tiene su propio endpoint
-//  que ya incluye nombres/apellidos/cédula del paciente)
-router.get('/ordenes-generadas', verifyToken, pagoController.obtenerOrdenesGeneradas);
-
-// GET /pagos/todos — Historial completo de pagos para filtros avanzados en caja
-router.get('/todos', verifyToken, pagoController.verTodosPagos);
-
-// POST /pagos/reembolsar — Registra el reembolso (total o parcial) de una orden pagada
-router.post('/reembolsar', verifyToken, pagoController.procesarReembolso);
-
-// GET /pagos/reembolsos — Historial de reembolsos procesados
-router.get('/reembolsos', verifyToken, pagoController.verReembolsos);
+router.post('/procesar', verifyToken, checkRole(CAJA), pagoController.procesarCobro);
+router.get('/hoy', verifyToken, checkRole(CAJA), pagoController.verPagosHoy);
+router.get('/ordenes-generadas', verifyToken, checkRole(CAJA), pagoController.obtenerOrdenesGeneradas);
+router.get('/todos', verifyToken, checkRole(CAJA), pagoController.verTodosPagos);
+router.post('/reembolsar', verifyToken, checkRole(CAJA), pagoController.procesarReembolso);
+router.get('/reembolsos', verifyToken, checkRole(CAJA), pagoController.verReembolsos);
 
 module.exports = router;

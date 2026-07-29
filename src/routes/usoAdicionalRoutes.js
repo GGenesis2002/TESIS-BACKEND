@@ -9,17 +9,21 @@
 const router = require('express').Router();
 const ctrl   = require('../controllers/usoAdicionalController');
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const ROLES = require('../config/roles');
+
+const ADMIN_ONLY = [ROLES.ADMIN];
+const ASISTENTE_ONLY = [ROLES.ASISTENTE];
 
 // Analista registra un uso extra
-router.post('/', verifyToken, ctrl.registrar);
+router.post('/', verifyToken, checkRole(ASISTENTE_ONLY), ctrl.registrar);
 
 // Admin lista todos los usos adicionales (pendientes e historial)
-router.get('/', verifyToken, ctrl.listar);
+router.get('/', verifyToken,checkRole(ADMIN_ONLY), ctrl.listar);
 
 // Admin aprueba → descuenta stock
-router.post('/:id/aprobar', verifyToken, ctrl.aprobar);
+router.post('/:id/aprobar', verifyToken,checkRole(ADMIN_ONLY), ctrl.aprobar);
 
 // Admin rechaza → no descuenta
-router.post('/:id/rechazar', verifyToken, ctrl.rechazar);
+router.post('/:id/rechazar', verifyToken,checkRole(ADMIN_ONLY), ctrl.rechazar);
 
 module.exports = router;

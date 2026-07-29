@@ -9,6 +9,11 @@ const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
  * @desc    Obtener el PDF final con QR y Firmas
  * @access  Privado (Cualquier usuario autenticado con permiso)
  */
-router.get('/descargar/:id_orden', verifyToken, reporteController.generarResultadoPDF);
+
+const ROLES = require('../config/roles');
+
+const PDF = [ROLES.ADMIN, ROLES.PACIENTE, ROLES.ESPECIALISTA, ROLES.ASISTENTE, ROLES.TECNICO];
+
+router.get('/descargar/:id_orden', verifyToken, checkRole(PDF), reporteController.generarResultadoPDF);
 
 module.exports = router;

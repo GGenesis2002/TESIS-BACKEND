@@ -1,7 +1,11 @@
+const crypto = require('crypto');
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 const { enviarCorreo } = require('../services/emailService');
 const { registrarAuditoria } = require('../helpers/auditoria'); // ← NUEVO
+
+const CODIGO_EXPIRA_MINUTOS = 10;
+const PASSWORD_MIN_LENGTH = 8;
 
 const recuperacionController = {
     
@@ -13,7 +17,11 @@ const recuperacionController = {
                            WHERE (correo = $1 OR cedula = $1) AND estado = TRUE`;
             const { rows } = await pool.query(query, [identificador]);
 
-            if (rows.length === 0) return res.status(404).json({ msg: "Cuenta no encontrada" });
+            // No revelamos si la cuenta existe o no (previene enumeración de usuarios).
+            // Si no existe, respondemos igual que en el caso exitoso pero sin enviar nada.
+            if (rows.length === 0) {
+                return res.json({ msg: "Si la cuenta existe, se ha enviado un correo con el nombre de usuario" });
+            }
 
             const user = rows[0];
             const html = `
@@ -57,9 +65,9 @@ const recuperacionController = {
                 );
 
                 if (!enviado) {
-                    return res.status(500).json({
-                        msg: "No se pudo enviar el correo"
-                    });
+                    console.error("No se pudo enviar el correo de recordatorio de usuario a", user.correo);
+                    // Mismo mensaje genérico: no delatamos fallos internos ni existencia de la cuenta
+                    return res.json({ msg: "Si la cuenta existe, se ha enviado un correo con el nombre de usuario" });
                 }
 
             // Auditoría — usa pool (sin transacción)
@@ -72,8 +80,11 @@ const recuperacionController = {
                 'Se envió el nombre de usuario al correo registrado'
             );
 
-            res.json({ msg: "Usuario enviado a su correo" });
-        } catch (e) { res.status(500).json({ error: e.message }); }
+            res.json({ msg: "Si la cuenta existe, se ha enviado un correo con el nombre de usuario" });
+        } catch (e) {
+            console.error("Error en enviarRecordatorioUsuario:", e.message);
+            res.status(500).json({ msg: "Error interno del servidor" });
+        }
     },
 
     // B. SOLICITAR CÓDIGO PARA NUEVA CONTRASEÑA
@@ -84,12 +95,23 @@ const recuperacionController = {
             const query = `SELECT id_usuario, nombres FROM usuario WHERE correo = $1 AND estado = TRUE`;
             const { rows } = await pool.query(query, [correo]);
 
-            if (rows.length === 0) return res.status(404).json({ msg: "Correo no registrado" });
+            // No revelamos si el correo está registrado o no (previene enumeración de usuarios)
+            if (rows.length === 0) {
+                return res.json({ msg: "Si el correo está registrado, recibirá un código de verificación" });
+            }
 
             const user = rows[0];
-            const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+            // crypto.randomInt es seguro para propósitos criptográficos; Math.random() no lo es
+            const codigo = crypto.randomInt(100000, 1000000).toString();
+            const codigoHash = await bcrypt.hash(codigo, 10);
+            const expira = new Date(Date.now() + CODIGO_EXPIRA_MINUTOS * 60 * 1000);
 
-            await pool.query('UPDATE usuario SET codigo_recuperacion = $1 WHERE id_usuario = $2', [codigo, user.id_usuario]);
+            // NOTA: requiere la columna `codigo_recuperacion_expira` (timestamp) en la tabla `usuario`.
+            // Ver migración sugerida al final del archivo.
+            await pool.query(
+                'UPDATE usuario SET codigo_recuperacion = $1, codigo_recuperacion_expira = $2 WHERE id_usuario = $3',
+                [codigoHash, expira, user.id_usuario]
+            );
 
             const html = `
                 <div style="font-family: Arial, sans-serif; max-width:600px; margin:auto; border:1px solid #e0e0e0; padding:20px; border-radius:10px;">
@@ -113,7 +135,7 @@ const recuperacionController = {
                 </div>
 
                 <p style="text-align:center; color:#e74c3c;">
-                    ⏱ Este código es de un solo uso, al salir de esta página, debera pedir uno nuevo.⏱
+                    ⏱ Este código es de un solo uso y expira en ${CODIGO_EXPIRA_MINUTOS} minutos.⏱
                 </p>
 
                 <p style="text-align:center; color:#2c3e50;">
@@ -128,29 +150,63 @@ const recuperacionController = {
 
                 </div>
                 `;
-            await enviarCorreo(correo, "Código de Seguridad", html);
+            const enviado = await enviarCorreo(correo, "Código de Seguridad", html);
+            if (!enviado) {
+                console.error("No se pudo enviar el correo de código de recuperación a", correo);
+            }
 
-            res.json({ msg: "Código enviado con éxito" });
-        } catch (e) { res.status(500).json({ error: e.message }); }
+            res.json({ msg: "Si el correo está registrado, recibirá un código de verificación" });
+        } catch (e) {
+            console.error("Error en solicitarCodigoPassword:", e.message);
+            res.status(500).json({ msg: "Error interno del servidor" });
+        }
     },
 
     // C. VALIDAR CÓDIGO Y CAMBIAR CONTRASEÑA
     validarYCambiarPassword: async (req, res) => {
         const { correo, codigo, nuevaPassword } = req.body;
+
+        if (!correo || !codigo || !nuevaPassword) {
+            return res.status(400).json({ msg: "Faltan datos requeridos" });
+        }
+        if (nuevaPassword.length < PASSWORD_MIN_LENGTH) {
+            return res.status(400).json({
+                msg: `La nueva contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`
+            });
+        }
+
         const client = await pool.connect();
         try {
-            const query = `SELECT id_usuario FROM usuario WHERE correo = $1 AND codigo_recuperacion = $2`;
-            const { rows } = await pool.query(query, [correo, codigo]);
+            // Buscamos solo por correo: el código está hasheado y no se puede comparar en SQL directamente
+            const query = `SELECT id_usuario, codigo_recuperacion, codigo_recuperacion_expira
+                           FROM usuario WHERE correo = $1 AND estado = TRUE`;
+            const { rows } = await pool.query(query, [correo]);
 
-            if (rows.length === 0) return res.status(400).json({ msg: "Código incorrecto o expirado" });
+            // Mensaje genérico igual sea que el correo no exista, el código no coincida o haya expirado
+            const CODIGO_INVALIDO = { msg: "Código incorrecto o expirado" };
 
-            const id_usuario = rows[0].id_usuario;
+            if (rows.length === 0 || !rows[0].codigo_recuperacion) {
+                return res.status(400).json(CODIGO_INVALIDO);
+            }
+
+            const user = rows[0];
+
+            if (!user.codigo_recuperacion_expira || new Date(user.codigo_recuperacion_expira) < new Date()) {
+                return res.status(400).json(CODIGO_INVALIDO);
+            }
+
+            const codigoValido = await bcrypt.compare(codigo, user.codigo_recuperacion);
+            if (!codigoValido) {
+                return res.status(400).json(CODIGO_INVALIDO);
+            }
+
+            const id_usuario = user.id_usuario;
             const hash = await bcrypt.hash(nuevaPassword, 10);
 
             await client.query('BEGIN');
 
             await client.query(
-                'UPDATE usuario SET password = $1, codigo_recuperacion = NULL WHERE id_usuario = $2',
+                'UPDATE usuario SET password = $1, codigo_recuperacion = NULL, codigo_recuperacion_expira = NULL WHERE id_usuario = $2',
                 [hash, id_usuario]
             );
 
@@ -166,11 +222,23 @@ const recuperacionController = {
 
             await client.query('COMMIT');
             res.json({ msg: "Contraseña actualizada correctamente" });
-        } catch (e) { 
+        } catch (e) {
             await client.query('ROLLBACK');
-            res.status(500).json({ error: e.message }); 
+            console.error("Error en validarYCambiarPassword:", e.message);
+            res.status(500).json({ msg: "Error interno del servidor" });
         } finally { client.release(); }
     }
 };
 
 module.exports = recuperacionController;
+
+// ─────────────────────────────────────────────
+// MIGRACIÓN REQUERIDA (ejecutar una sola vez en tu BD):
+//
+//   ALTER TABLE usuario
+//     ADD COLUMN IF NOT EXISTS codigo_recuperacion_expira TIMESTAMP;
+//
+// La columna `codigo_recuperacion` ahora almacena un HASH bcrypt del código,
+// no el código en texto plano. Si tenías índices o lógica externa que dependían
+// de comparar ese campo directamente, tendrán que actualizarse.
+// ─────────────────────────────────────────────

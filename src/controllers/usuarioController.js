@@ -47,6 +47,20 @@ const usuarioController = {
         }
     },
 
+    // NUEVO: Perfil del usuario logueado
+    obtenerPerfil: async (req, res) => {
+        try {
+            const usuario = await Usuario.getById(req.user.id);
+            if (!usuario) {
+                return res.status(404).json({ msg: "Usuario no encontrado" });
+            }
+            res.json(usuario);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    },
+
+
     // 2. Activar/Desactivar cuenta
     toggleEstado: async (req, res) => {
         try {

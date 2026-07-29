@@ -13,13 +13,13 @@ const ROLES = require('../config/roles');
 
 const ADMIN_ONLY = [ROLES.ADMIN];
 const ASISTENTE_ONLY = [ROLES.ASISTENTE];
+const ADMIN_O_ASISTENTE = [...ADMIN_ONLY, ...ASISTENTE_ONLY];
 
 // Analista registra un uso extra
 router.post('/', verifyToken, checkRole(ASISTENTE_ONLY), ctrl.registrar);
 
 // Admin lista todos los usos adicionales (pendientes e historial)
-router.get('/', verifyToken,checkRole(ADMIN_ONLY, ASISTENTE_ONLY), ctrl.listar);
-
+router.get('/', verifyToken, checkRole(ADMIN_O_ASISTENTE), ctrl.listar);
 // Admin aprueba → descuenta stock
 router.post('/:id/aprobar', verifyToken,checkRole(ADMIN_ONLY), ctrl.aprobar);
 

@@ -6,7 +6,7 @@ const ROLES = require('../config/roles');
 
 // "Órdenes médicas" está asignado a Administrador y Asistente Analista (Secretaria)
 const GESTION_ORDENES = [ROLES.ADMIN, ROLES.ASISTENTE];
-const TODOS = [ROLES.ADMIN, ROLES.ASISTENTE, ROLES.ESPECIALISTA, ROLES.TECNICO]
+const TODOS = [ROLES.ADMIN, ROLES.ASISTENTE, ROLES.ESPECIALISTA, ROLES.TECNICO, ROLES.PACIENTE]
 
 // Dashboard y Búsqueda (staff)
 router.get('/', verifyToken, checkRole(TODOS), ordenCtrl.listar); // ?estado=Generada
@@ -26,6 +26,6 @@ router.patch('/:id/cancelar', verifyToken, checkRole(GESTION_ORDENES), ordenCtrl
 
 
 
-router.get('/:id/detalle', verifyToken, checkRole([...TODOS, ROLES.PACIENTE]), ordenCtrl.obtenerDetalle);
+router.get('/:id/detalle', verifyToken, checkRole([TODOS]), ordenCtrl.obtenerDetalle);
 
 module.exports = router;

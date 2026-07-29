@@ -5,7 +5,9 @@ const ROLES = require('../config/roles');
 
 // "Inventario" está asignado exclusivamente a Administrador en el reglamento.
 const INVENTARIO = [ROLES.ADMIN];
-const INSUMOS_EXTRAS= [ROLES.ASISTENTE];
+const INSUMOS_EXTRAS = [ROLES.ASISTENTE];
+const INVENTARIO_CON_ASISTENTE = [...INVENTARIO, ...INSUMOS_EXTRAS];
+
 
 // ── CATEGORÍAS DE INSUMOS (CRUD completo) ─────────────────────────────────────
 router.get   ('/categorias',         verifyToken, checkRole(INVENTARIO), ctrl.getCategorias);
@@ -29,7 +31,7 @@ router.post  ('/examen-tipo-muestra',                     verifyToken, checkRole
 router.delete('/examen-tipo-muestra/:id_examen/:id_tipo', verifyToken, checkRole(INVENTARIO), ctrl.quitarTipoExamen);
 
 // ── CRUD INSUMOS (/:id siempre al final) ─────────────────────────────────────
-router.get   ('/',     verifyToken, checkRole(INVENTARIO, INSUMOS_EXTRAS), ctrl.getInsumos);
+router.get('/', verifyToken, checkRole(INVENTARIO_CON_ASISTENTE), ctrl.getInsumos);
 router.post  ('/',     verifyToken, checkRole(INVENTARIO), ctrl.postInsumo);
 router.put   ('/:id',  verifyToken, checkRole(INVENTARIO), ctrl.putInsumo);
 router.delete('/:id',  verifyToken, checkRole(INVENTARIO), ctrl.deleteInsumo);

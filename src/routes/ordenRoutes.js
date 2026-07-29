@@ -26,6 +26,10 @@ router.patch('/:id/cancelar', verifyToken, checkRole(GESTION_ORDENES), ordenCtrl
 
 
 
-router.get('/:id/detalle', verifyToken, checkRole([TODOS]), ordenCtrl.obtenerDetalle);
+// ✅ FIX: TODOS ya es un arreglo — envolverlo en [TODOS] lo anida dos niveles
+// y checkRole solo aplana UN nivel (.flat()), así que la comparación de roles
+// nunca coincidía y esta ruta devolvía 403 para cualquier usuario, sin importar
+// su rol. Se usa TODOS directamente, igual que en las otras rutas de este archivo.
+router.get('/:id/detalle', verifyToken, checkRole(TODOS), ordenCtrl.obtenerDetalle);
 
 module.exports = router;

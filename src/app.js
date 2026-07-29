@@ -43,6 +43,10 @@ const allowedOrigins = [
     'http://localhost:5173',         // si usas Vite
 ].filter(Boolean); // quita entradas undefined si alguna var no está seteada
 
+if (!process.env.FRONTEND_URL) {
+    console.error('⚠️ FRONTEND_URL no está definida — solo se permitirá acceso desde localhost.');
+}
+
 app.use(cors({
     origin: function (origin, callback) {
         // Permite peticiones sin origin (ej. Postman, apps móviles, curl)

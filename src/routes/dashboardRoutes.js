@@ -45,7 +45,7 @@ router.get('/ingresos-por-usuario', verifyToken, checkRole(FINANZAS), dashboardC
  * @route   GET /api/dashboard/auditoria
  * @desc    Historial y bitácora → información sensible del sistema, solo Admin.
  */
-router.get('/auditoria', verifyToken, checkRole([ROLES.ADMIN]), dashboardController.getAuditoria);
+router.get('/auditoria', verifyToken, checkRole([ROLES.ADMIN, ROLES.TECNICO]), dashboardController.getAuditoria);
 
 router.get('/alertas', verifyToken, (req, res) => {
     res.redirect(307, '/api/notificaciones');
@@ -55,6 +55,6 @@ router.get('/alertas', verifyToken, (req, res) => {
 // ─── MODALES DE DRILL-DOWN ────────────────────────────────────────────────────
 
 router.get('/resultados-criticos', verifyToken, checkRole([ROLES.ADMIN, ROLES.ESPECIALISTA]), dashboardController.getResultadosCriticos);
-router.get('/usuarios-activos-hoy', verifyToken, checkRole([ROLES.ADMIN]), dashboardController.getUsuariosActivosHoy);
+router.get('/usuarios-activos-hoy', verifyToken, checkRole([ROLES.ADMIN, ROLES.TECNICO]), dashboardController.getUsuariosActivosHoy);
 
 module.exports = router;

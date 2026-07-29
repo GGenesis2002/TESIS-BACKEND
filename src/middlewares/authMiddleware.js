@@ -65,11 +65,16 @@ const verifyToken = async (req, res, next) => {
  * * Uso en rutas:
  * router.get('/examenes', verifyToken, checkRole(['Especialista', 'Administrador']), handler);
  */
-const checkRole = (rolesPermitidos) => {
+const checkRole = (...gruposDeRoles) => {
     return (req, res, next) => {
         if (!req.user) {
             return res.status(401).json({ msg: "No autorizado" });
         }
+
+        // Acepta tanto checkRole([A, B]) como checkRole(GRUPO1, GRUPO2, ...)
+        // para que un descuido como checkRole(INVENTARIO, ASISTENTE_ONLY)
+        // no termine ignorando silenciosamente el segundo grupo.
+        const rolesPermitidos = gruposDeRoles.flat();
 
         // Se asume que req.user.roles es un arreglo ['Secretaria', 'Administrador']
         // Si en algún token viejo viene como string, se fuerza a un arreglo para evitar caídas

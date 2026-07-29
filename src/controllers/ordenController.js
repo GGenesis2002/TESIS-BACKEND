@@ -455,7 +455,7 @@ const ordenController = {
             // Reemplazamos la llamada al módulo por una consulta directa con JOINs
             // para asegurar que siempre viaje la CÉDULA al frontend.
             let qGeneral = `
-                SELECT o.id_orden, o.numero_ticket, o.fecha_orden, o.estado, o.total, o.id_paciente,
+                SELECT o.id_orden, o.numero_ticket, o.fecha_orden, o.estado, o.total, o.id_paciente, o.qr_codigo,
                        u.nombres, u.apellidos, u.cedula,
                        CONCAT(u.nombres, ' ', u.apellidos) AS paciente,
                        (SELECT COUNT(*) FROM detalle_orden do2 WHERE do2.id_orden = o.id_orden) AS total_examenes

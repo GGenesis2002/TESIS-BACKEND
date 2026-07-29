@@ -37,7 +37,26 @@ const documentoRoutes = require("./routes/documento.routes");
 const app = express();
 
 // --- 2. MIDDLEWARES GLOBALES ---
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+const allowedOrigins = [
+    process.env.FRONTEND_URL,        // producción
+    'http://localhost:3000',         // desarrollo local (ajusta el puerto)
+    'http://localhost:5173',         // si usas Vite
+].filter(Boolean); // quita entradas undefined si alguna var no está seteada
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Permite peticiones sin origin (ej. Postman, apps móviles, curl)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.warn(`⚠️ CORS bloqueado para origin: ${origin}`);
+            callback(new Error('No permitido por CORS'));
+        }
+    },
+    credentials: true // solo si usas cookies; si usas JWT en header, puedes quitarlo
+}));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -18,7 +18,7 @@ const ASISTENTE_ONLY = [ROLES.ASISTENTE];
 router.post('/', verifyToken, checkRole(ASISTENTE_ONLY), ctrl.registrar);
 
 // Admin lista todos los usos adicionales (pendientes e historial)
-router.get('/', verifyToken,checkRole(ADMIN_ONLY), ctrl.listar);
+router.get('/', verifyToken,checkRole(ADMIN_ONLY, ASISTENTE_ONLY), ctrl.listar);
 
 // Admin aprueba → descuenta stock
 router.post('/:id/aprobar', verifyToken,checkRole(ADMIN_ONLY), ctrl.aprobar);

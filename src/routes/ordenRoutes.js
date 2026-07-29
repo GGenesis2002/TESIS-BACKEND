@@ -7,6 +7,7 @@ const ROLES = require('../config/roles');
 // "Órdenes médicas" está asignado a Administrador y Asistente Analista (Secretaria)
 const GESTION_ORDENES = [ROLES.ADMIN, ROLES.ASISTENTE];
 const TODOS = [ROLES.ADMIN, ROLES.ASISTENTE, ROLES.ESPECIALISTA, ROLES.TECNICO]
+const GESTION_ORDENES_LIMITADO = [ROLES.ADMIN, ROLES.ASISTENTE, ROLES.PACIENTE];
 
 // Dashboard y Búsqueda (staff)
 router.get('/', verifyToken, checkRole(TODOS), ordenCtrl.listar); // ?estado=Generada
@@ -15,8 +16,8 @@ router.post('/buscar', verifyToken, checkRole(TODOS), ordenCtrl.buscarOrden);
 // Acciones del Paciente — SOLO el propio paciente.
 // ⚠️ El controlador debe tomar el id_paciente de req.user (token), NUNCA del body,
 // para que un paciente no pueda generar/editar órdenes de otro paciente (IDOR).
-router.post('/paciente/generar', verifyToken, checkRole([ROLES.PACIENTE, GESTION_ORDENES]), ordenCtrl.crearPorPaciente);
-router.put('/paciente/:id/editar', verifyToken, checkRole([ROLES.PACIENTE, GESTION_ORDENES]), ordenCtrl.editarPorPaciente);
+router.post('/paciente/generar', verifyToken, checkRole([GESTION_ORDENES_LIMITADO]), ordenCtrl.crearPorPaciente);
+router.put('/paciente/:id/editar', verifyToken, checkRole([GESTION_ORDENES_LIMITADO]), ordenCtrl.editarPorPaciente);
 
 // Acciones de la Secretaria / Administración
 router.put('/secretaria/corregir', verifyToken, checkRole(GESTION_ORDENES), ordenCtrl.corregirOrden);

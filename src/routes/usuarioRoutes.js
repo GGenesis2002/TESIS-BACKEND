@@ -5,7 +5,7 @@ const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 const ROLES = require('../config/roles');
 
 
-const STAFF_RRHH = [ROLES.ADMIN, ROLES.TECNICO, ROLES.ASISTENTE];
+const STAFF_RRHH = [ROLES.ADMIN, ROLES.TECNICO, ROLES.ASISTENTE, ROLES.ESPECIALISTA];
 
 
 // El usuario logueado gestiona su perfil

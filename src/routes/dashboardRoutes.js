@@ -22,7 +22,7 @@ router.get('/secretaria', verifyToken, checkRole([ROLES.ADMIN, ROLES.ASISTENTE])
  * @route   GET /api/dashboard/tecnico
  */
 router.get('/tecnico', verifyToken, checkRole([ROLES.ADMIN, ROLES.TECNICO]), dashboardController.getTecnicoStats);
-
+router.get('/usuarios-inactivos', verifyToken, checkRole([ROLES.ADMIN, ROLES.TECNICO]), dashboardController.getUsuariosInactivos);
 
 // ─── REPORTES Y FINANZAS ─────────────────────────────────────────────────────
 

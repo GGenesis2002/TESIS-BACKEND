@@ -531,6 +531,35 @@ const dashboardController = {
         }
     },
 
+    // ─────────────────────────────────────────────────────────────────────────────
+// GET /dashboard/usuarios-inactivos
+// Lista de usuarios deshabilitados (estado = FALSE)
+// ─────────────────────────────────────────────────────────────────────────────
+getUsuariosInactivos: async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        u.id_usuario,
+        u.nombres,
+        u.apellidos,
+        u.username,
+        u.correo,
+        u.ultimo_acceso,
+        r.nombre AS rol
+      FROM usuario u
+      LEFT JOIN usuario_rol ur ON u.id_usuario = ur.id_usuario AND ur.activo = TRUE
+      LEFT JOIN rol r ON ur.id_rol = r.id_rol
+      WHERE u.estado = FALSE
+      ORDER BY u.ultimo_acceso DESC NULLS LAST
+    `);
+
+    res.json(result.rows);
+  } catch (e) {
+    console.error('Error en getUsuariosInactivos:', e);
+    res.status(500).json({ error: e.message });
+  }
+},
+
     // ─── DASHBOARD TÉCNICO ──────────────────────────────────────────────────
     getTecnicoStats: async (req, res) => {
         try {

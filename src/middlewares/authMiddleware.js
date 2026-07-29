@@ -1,4 +1,6 @@
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db'); 
+
 
 // ─────────────────────────────────────────────
 // CÓMO GENERAR EL TOKEN EN TU CONTROLADOR LOGIN
@@ -23,7 +25,7 @@ const jwt = require('jsonwebtoken');
  * Mantiene el nombre original. Valida que el JWT sea correcto 
  * y lo adjunta a req.user.
  */
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
     const authHeader = req.header('Authorization') || req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -35,10 +37,18 @@ const verifyToken = (req, res, next) => {
         const verified = jwt.verify(token, process.env.JWT_SECRET);
         req.user = verified;
 
-        // ← NUEVO: si el frontend envía el rol activo, usarlo
         const idUsuarioRolActivo = req.headers['x-id-usuario-rol'];
         if (idUsuarioRolActivo) {
-            req.user.id_usuario_rol = parseInt(idUsuarioRolActivo);
+            // ✅ Validar que ese id_usuario_rol REALMENTE pertenece al usuario del token
+            const { rows } = await pool.query(
+                `SELECT id_usuario_rol FROM usuario_rol
+                 WHERE id_usuario_rol = $1 AND id_usuario = $2 AND activo = TRUE`,
+                [parseInt(idUsuarioRolActivo), verified.id]
+            );
+            if (rows.length === 0) {
+                return res.status(403).json({ msg: "El rol activo indicado no pertenece a este usuario." });
+            }
+            req.user.id_usuario_rol = rows[0].id_usuario_rol;
         }
 
         next();

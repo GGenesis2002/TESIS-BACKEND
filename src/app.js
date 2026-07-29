@@ -37,24 +37,7 @@ const documentoRoutes = require("./routes/documento.routes");
 const app = express();
 
 // --- 2. MIDDLEWARES GLOBALES ---
-// Lista de orígenes permitidos. Usa una variable de entorno en producción
-// (ej. FRONTEND_URLS="https://tu-frontend.com,https://otro-dominio.com")
-// para no tener que tocar código cada vez que cambie el dominio.
-const allowedOrigins = (process.env.FRONTEND_URLS || 'http://localhost:3000')
-    .split(',')
-    .map(o => o.trim());
-
-app.use(cors({
-    origin: (origin, callback) => {
-        // Permite herramientas sin origin (curl, Postman, apps móviles nativas)
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('No permitido por CORS'));
-        }
-    },
-    credentials: true,
-}));
+app.use(cors({ origin: process.env.FRONTEND_URL }));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -10,8 +10,8 @@ const STAFF_RRHH = [ROLES.ADMIN, ROLES.TECNICO];
 
 router.get('/', verifyToken, checkRole(STAFF_RRHH), personalController.listarPersonal);
 router.get('/consultar-cedula/:cedula', verifyToken, checkRole(STAFF_RRHH), personalController.consultarPorCedula);
-router.get('/:id', verifyToken, checkRole(STAFF_RRHH), personalController.obtenerEmpleado);
+router.get('/:id', verifyToken, checkRole(STAFF_RRHH, ROLES.ESPECIALISTA, ROLES.ASISTENTE), personalController.obtenerEmpleado);
 router.post('/registro', verifyToken, checkRole(STAFF_RRHH), personalController.registrarPersonal);
-router.put('/:id', verifyToken, checkRole(STAFF_RRHH), personalController.actualizarPersonal);
+router.put('/:id', verifyToken, checkRole(STAFF_RRHH,ROLES.ESPECIALISTA, ROLES.ASISTENTE), personalController.actualizarPersonal);
 
 module.exports = router;

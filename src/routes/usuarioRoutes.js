@@ -10,7 +10,7 @@ const STAFF_RRHH = [ROLES.ADMIN, ROLES.TECNICO, ROLES.ASISTENTE, ROLES.ESPECIALI
 
 // El usuario logueado gestiona su perfil
 router.put('/update-password', verifyToken, controller.actualizarPassword);
-router.get('/perfil', verifyToken, checkRole(STAFF_RRHH), controller.obtenerPerfil);
+
 router.get('/all', verifyToken,checkRole(STAFF_RRHH), controller.listarUsuarios);
 router.patch('/status/:id', verifyToken, checkRole(STAFF_RRHH),controller.toggleEstado);
 

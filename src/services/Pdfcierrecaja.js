@@ -191,7 +191,7 @@ function tablaReembolsos(doc, titulo, lista, color) {
 
     doc.font('Helvetica').fillColor(DARK);
     if (lista.length === 0) {
-        doc.fontSize(8.5).fillColor('#9CA3AF').text('Sin reembolsos en este turno');
+        doc.fontSize(8.5).fillColor('#9CA3AF').text('Sin reembolso en este turno');
     } else {
         lista.forEach(r => {
             const y = doc.y;

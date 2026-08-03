@@ -17,6 +17,27 @@ function getHoyLocal() {
     }).format(new Date());
 }
 
+// ─── HELPER SQL: CONVERSIÓN CONSISTENTE DE ZONA HORARIA ─────────────────────
+// Las columnas de fecha en esta BD son `timestamp without time zone` pero
+// se guardan en UTC (confirmado también en helpers/scheduledTasks.js).
+// Un simple `columna AT TIME ZONE 'America/Guayaquil'` sobre un timestamp
+// SIN zona hace la conversión al revés: Postgres asume que el valor YA
+// está en la zona indicada y lo convierte a UTC, en vez de interpretarlo
+// como UTC y convertirlo a hora local. Eso desplaza la fecha ~5 horas en
+// la dirección incorrecta y hace que registros de la tarde/noche (hora
+// Ecuador) se "pierdan" de los filtros de fecha "de hoy" o de rango.
+//
+// La conversión correcta para timestamp-sin-zona-que-guarda-UTC es la
+// doble conversión: primero decirle a Postgres "esto es UTC" y luego
+// convertir a la zona deseada:
+//
+//   (columna AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guayaquil')::date
+//
+// Se centraliza aquí como snippet SQL para no repetir el mismo comentario
+// en cada query y para que un futuro cambio de zona se haga en un solo lugar.
+const TZ_GYE = "America/Guayaquil";
+const localDate = (col) => `(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${TZ_GYE}')::date`;
+
 // ─── HELPER: FILTRO DE ALCANCE POR ROL (admin ve todo, asistente solo lo suyo) ──
 // Misma lógica que ya usaba getArqueoCajaHoy, extraída aquí para poder
 // reutilizarla en cualquier endpoint que desglose datos por secretaria/usuario
@@ -61,7 +82,7 @@ const dashboardController = {
             const query = `
                 SELECT
                     (SELECT COUNT(*) FROM paciente)                                                                  AS pac_hoy,
-                    (SELECT COUNT(*) FROM orden_medica WHERE fecha_orden::date = $1)                                 AS ord_hoy,
+                    (SELECT COUNT(*) FROM orden_medica WHERE ${localDate('fecha_orden')} = $1)                       AS ord_hoy,
                     (SELECT COUNT(*) FROM orden_medica WHERE estado = 'Por Validar')                                 AS pen_val,
                     (SELECT COUNT(*) FROM orden_medica WHERE estado = 'Validado')                                    AS completados,
                     (SELECT COUNT(*) FROM detalle_resultado dr
@@ -73,17 +94,17 @@ const dashboardController = {
                            dr.valor_obtenido::numeric > pe.rango_max
                            OR dr.valor_obtenido::numeric < pe.rango_min
                        ))                                                                                           AS criticos,
-                    (SELECT COUNT(*) FROM usuario WHERE ultimo_acceso::date = $1)                                    AS activos,
+                    (SELECT COUNT(*) FROM usuario WHERE ${localDate('ultimo_acceso')} = $1)                          AS activos,
                     (
-                        (SELECT COALESCE(SUM(monto),0) FROM pago WHERE fecha_pago::date = $1)
+                        (SELECT COALESCE(SUM(monto),0) FROM pago WHERE ${localDate('fecha_pago')} = $1)
                         -
-                        (SELECT COALESCE(SUM(monto),0) FROM reembolso WHERE fecha_reembolso::date = $1)
+                        (SELECT COALESCE(SUM(monto),0) FROM reembolso WHERE ${localDate('fecha_reembolso')} = $1)
                     )                                                                                              AS ingresos_hoy,
                     (SELECT COUNT(*) FROM insumos WHERE stock_actual <= stock_minimo AND estado = TRUE)              AS stock_bajo
             `;
             const stats            = await pool.query(query, [hoy]);
             const ordenesRecientes = await pool.query(
-                "SELECT numero_ticket, estado FROM orden_medica WHERE fecha_orden::date = $1 LIMIT 5", [hoy]
+                `SELECT numero_ticket, estado FROM orden_medica WHERE ${localDate('fecha_orden')} = $1 LIMIT 5`, [hoy]
             );
             res.json({ kpis: stats.rows[0], ordenesDia: ordenesRecientes.rows });
         } catch (e) {
@@ -99,7 +120,7 @@ const dashboardController = {
             const queryKpis = `
                 SELECT
                     (SELECT COUNT(*) FROM paciente)                                                                  AS pac_reg_hoy,
-                    (SELECT COUNT(*) FROM orden_medica WHERE fecha_orden::date = $1)                                 AS ord_cre_hoy,
+                    (SELECT COUNT(*) FROM orden_medica WHERE ${localDate('fecha_orden')} = $1)                       AS ord_cre_hoy,
                     (SELECT COUNT(*) FROM orden_medica WHERE estado IN ('Generada','Pagada','En Proceso','Por Validar')) AS resultados_pen,
                     (SELECT COUNT(*) FROM orden_medica WHERE estado = 'Validado')                                    AS listos_entrega
             `;
@@ -123,7 +144,7 @@ const dashboardController = {
                  FROM orden_medica o
                  LEFT JOIN paciente p ON o.id_paciente = p.id_paciente
                  LEFT JOIN usuario  u ON p.id_usuario  = u.id_usuario
-                 WHERE o.fecha_orden::date = $1
+                 WHERE ${localDate('o.fecha_orden')} = $1
                  ORDER BY o.fecha_orden DESC`,
                 [hoy]
             );
@@ -282,6 +303,12 @@ const dashboardController = {
         // La magia está en: ($3::int IS NULL OR t.id_secretaria = $3)
         // Si $3 es NULL (Admin), la condición siempre es verdadera y trae todo.
         // Si $3 tiene un ID (Asistente), filtra solo sus registros.
+        //
+        // ⚠️ FIX ZONA HORARIA: antes se comparaba t.fecha::date directo contra
+        // $1/$2, lo que usa el día en UTC. Ahora se convierte a hora local
+        // (America/Guayaquil) antes de extraer la fecha, igual que en el resto
+        // de endpoints de este archivo — evita que movimientos de la tarde/noche
+        // (hora Ecuador) se cuenten en el día siguiente o queden fuera del rango.
         const queryTotales = `
             SELECT
                 COALESCE(SUM(monto) FILTER (WHERE origen = 'pago' AND metodo ILIKE 'Efectivo%'), 0) -
@@ -299,7 +326,7 @@ const dashboardController = {
                 UNION ALL
                 SELECT 'reembolso' as origen, metodo_reembolso as metodo, monto, fecha_reembolso as fecha, id_secretaria FROM reembolso
             ) t
-            WHERE t.fecha::date BETWEEN $1 AND $2
+            WHERE ${localDate('t.fecha')} BETWEEN $1 AND $2
               AND ($3::int IS NULL OR t.id_secretaria = $3)
         `;
 
@@ -342,7 +369,7 @@ const dashboardController = {
             LEFT JOIN orden_medica       om ON om.id_orden       = t.id_orden
             LEFT JOIN asistente_analista aa ON aa.id_secretaria  = t.id_secretaria
             LEFT JOIN usuario            u  ON u.id_usuario      = aa.id_usuario
-            WHERE t.fecha::date BETWEEN $1 AND $2
+            WHERE ${localDate('t.fecha')} BETWEEN $1 AND $2
               AND ($3::int IS NULL OR t.id_secretaria = $3)
             ORDER BY t.fecha DESC
             LIMIT 200
@@ -392,7 +419,7 @@ const dashboardController = {
                         COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Efectivo%'), 0)      AS cobrado_efectivo,
                         COALESCE(SUM(monto) FILTER (WHERE metodo_pago ILIKE 'Transferencia%'), 0) AS cobrado_transferencia
                     FROM pago
-                    WHERE fecha_pago::date BETWEEN $1 AND $2
+                    WHERE ${localDate('fecha_pago')} BETWEEN $1 AND $2
                     GROUP BY id_secretaria
                 ),
                 devoluciones AS (
@@ -401,7 +428,7 @@ const dashboardController = {
                         COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Efectivo'), 0)      AS reembolsado_efectivo,
                         COALESCE(SUM(monto) FILTER (WHERE metodo_reembolso = 'Transferencia'), 0) AS reembolsado_transferencia
                     FROM reembolso
-                    WHERE fecha_reembolso::date BETWEEN $1 AND $2
+                    WHERE ${localDate('fecha_reembolso')} BETWEEN $1 AND $2
                     GROUP BY id_secretaria
                 )
                 SELECT
@@ -465,7 +492,7 @@ const dashboardController = {
                 SELECT 
                     o.id_orden, 
                     o.numero_ticket, 
-                    o.fecha_orden::date as fecha, 
+                    ${localDate('o.fecha_orden')} as fecha, 
                     o.estado, 
                     COALESCE(o.total, 0) as total,
                     u.nombres, 
@@ -473,8 +500,8 @@ const dashboardController = {
                 FROM orden_medica o
                 LEFT JOIN paciente p ON o.id_paciente = p.id_paciente
                 LEFT JOIN usuario u ON p.id_usuario = u.id_usuario
-                WHERE EXTRACT(MONTH FROM o.fecha_orden) = $1 
-                  AND EXTRACT(YEAR FROM o.fecha_orden) = $2
+                WHERE EXTRACT(MONTH FROM (o.fecha_orden AT TIME ZONE 'UTC' AT TIME ZONE '${TZ_GYE}')) = $1 
+                  AND EXTRACT(YEAR FROM (o.fecha_orden AT TIME ZONE 'UTC' AT TIME ZONE '${TZ_GYE}')) = $2
                 ORDER BY o.fecha_orden DESC
             `;
             const result = await pool.query(query, [mes, anio]);
@@ -504,6 +531,9 @@ const dashboardController = {
 
             // ✅ CORRECCIÓN: se une auditoria.id_usuario_rol directamente con usuario_rol
             // así se obtiene el rol CON EL QUE realmente actuó, no todos sus roles
+            //
+            // ⚠️ FIX ZONA HORARIA: los filtros desde/hasta ahora se comparan contra
+            // la fecha local (Guayaquil), no contra el día en UTC.
             const query = `
                 SELECT
                     a.id_auditoria,
@@ -519,8 +549,8 @@ const dashboardController = {
                 LEFT JOIN usuario      u  ON a.id_usuario     = u.id_usuario
                 LEFT JOIN usuario_rol  ur ON a.id_usuario_rol = ur.id_usuario_rol
                 LEFT JOIN rol          r  ON ur.id_rol        = r.id_rol
-                WHERE ($1::date IS NULL OR a.fecha_hora::date >= $1)
-                  AND ($2::date IS NULL OR a.fecha_hora::date <= $2)
+                WHERE ($1::date IS NULL OR ${localDate('a.fecha_hora')} >= $1)
+                  AND ($2::date IS NULL OR ${localDate('a.fecha_hora')} <= $2)
                 ORDER BY a.fecha_hora DESC
                 LIMIT 200
             `;
@@ -577,7 +607,7 @@ getUsuariosInactivos: async (req, res) => {
                     (SELECT COUNT(*) FROM examen)                                                                    AS total_examenes,
                     (SELECT COUNT(*) FROM parametro_examen)                                                         AS total_parametros,
                     (SELECT COUNT(*) FROM categoria_examen WHERE estado = true)                                      AS total_categorias,
-                    (SELECT COUNT(*) FROM usuario WHERE ultimo_acceso::date = $1)                                    AS usuarios_activos_hoy,
+                    (SELECT COUNT(*) FROM usuario WHERE ${localDate('ultimo_acceso')} = $1)                          AS usuarios_activos_hoy,
                     (SELECT COUNT(*) FROM examen e
                      WHERE NOT EXISTS (
                          SELECT 1 FROM parametro_examen pe WHERE pe.id_examen = e.id_examen
@@ -653,10 +683,10 @@ getOrdenesPorUsuario: async (req, res) => {
         } else if (desde || hasta) {
             const fDesde = desde || hasta;
             const fHasta = hasta || desde;
-            whereFecha = 'WHERE o.fecha_orden::date BETWEEN $1 AND $2';
+            whereFecha = `WHERE ${localDate('o.fecha_orden')} BETWEEN $1 AND $2`;
             params = [fDesde, fHasta];
         } else {
-            whereFecha = 'WHERE o.fecha_orden::date = $1';
+            whereFecha = `WHERE ${localDate('o.fecha_orden')} = $1`;
             params = [hoy];
         }
 
@@ -764,14 +794,14 @@ getIngresosPorUsuario: async (req, res) => {
                        COUNT(DISTINCT id_orden)::int AS total_ordenes,
                        SUM(monto)                     AS total_cobrado
                 FROM pago
-                WHERE fecha_pago::date BETWEEN $1 AND $2
+                WHERE ${localDate('fecha_pago')} BETWEEN $1 AND $2
                 GROUP BY id_secretaria
             ),
             devoluciones AS (
                 SELECT id_secretaria,
                        SUM(monto) AS total_reembolsado
                 FROM reembolso
-                WHERE fecha_reembolso::date BETWEEN $1 AND $2
+                WHERE ${localDate('fecha_reembolso')} BETWEEN $1 AND $2
                 GROUP BY id_secretaria
             )
             SELECT
@@ -834,7 +864,7 @@ getUsuariosActivosHoy: async (req, res) => {
             FROM usuario u
             LEFT JOIN usuario_rol ur ON u.id_usuario = ur.id_usuario AND ur.activo = TRUE
             LEFT JOIN rol r ON ur.id_rol = r.id_rol
-            WHERE u.ultimo_acceso::date = $1
+            WHERE ${localDate('u.ultimo_acceso')} = $1
               AND u.estado = TRUE
             ORDER BY u.ultimo_acceso DESC
         `, [hoy]);
@@ -902,6 +932,16 @@ getResultadosCriticos: async (req, res) => {
 //   - resumen:        conteos y montos globales, y descuadres (faltante/sobrante)
 //   - tendencia:      serie de diferencias por cierre, ordenada por fecha (para gráfico)
 //   - rankingCajeros:  por secretaria, precisión de cierre y monto gestionado
+//
+// ⚠️ FIX ZONA HORARIA (el bug reportado): antes se hacía
+//   (cc.fecha_apertura AT TIME ZONE 'America/Guayaquil')::date
+// sobre una columna `timestamp` SIN zona que guarda UTC. Un solo
+// `AT TIME ZONE` sobre timestamp-sin-zona hace la conversión al revés
+// (asume que el valor YA está en esa zona y lo pasa a UTC), desplazando
+// la fecha ~5 horas en la dirección incorrecta y dejando fuera cierres
+// que sí correspondían al rango pedido — por eso "no salían los cierres
+// de caja" al filtrar por hoy. Se usa localDate(), que hace la doble
+// conversión correcta: UTC -> America/Guayaquil.
 // ─────────────────────────────────────────────────────────────────────────────
 getCierresCaja: async (req, res) => {
     try {
@@ -947,7 +987,7 @@ getCierresCaja: async (req, res) => {
                     COUNT(*)                                                                   AS num_reembolsos
                 FROM reembolso WHERE reembolso.id_cierre = cc.id_cierre
             ) r ON TRUE
-            WHERE (cc.fecha_apertura AT TIME ZONE 'America/Guayaquil')::date BETWEEN $1 AND $2
+            WHERE ${localDate('cc.fecha_apertura')} BETWEEN $1 AND $2
               AND (
                     $3::text IS NULL
                     OR u.nombres   ILIKE '%' || $3 || '%'

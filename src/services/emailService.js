@@ -1,8 +1,16 @@
 const axios = require('axios');
 
-const enviarCorreo = async (to, subject, html) => {
+/**
+ * Envía un correo vía Brevo.
+ * @param {string} to
+ * @param {string} subject
+ * @param {string} html
+ * @param {Array<{ content: string, name: string }>} [attachments] - adjuntos en
+ *   base64 (sin el prefijo "data:..."), p.ej. el PDF de un cierre de caja.
+ */
+const enviarCorreo = async (to, subject, html, attachments = []) => {
     try {
-        await axios.post('https://api.brevo.com/v3/smtp/email', {
+        const body = {
             sender: {
                 name: "Laboratorio Clínico Garófalo",
                 email: process.env.EMAIL_FROM
@@ -14,7 +22,13 @@ const enviarCorreo = async (to, subject, html) => {
             ],
             subject: subject,
             htmlContent: html
-        }, {
+        };
+
+        if (Array.isArray(attachments) && attachments.length > 0) {
+            body.attachment = attachments.map(a => ({ content: a.content, name: a.name }));
+        }
+
+        await axios.post('https://api.brevo.com/v3/smtp/email', body, {
             headers: {
                 'api-key': process.env.BREVO_API_KEY,
                 'Content-Type': 'application/json'

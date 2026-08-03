@@ -3,12 +3,16 @@ const PDFDocument = require('pdfkit');
 // Requiere la dependencia "pdfkit" en package.json:
 //   npm install pdfkit
 
-const ORANGE = '#E88B3A';
-const DARK   = '#1F2937';
-const GRAY   = '#6B7280';
-const GREEN  = '#10B981';
-const BLUE   = '#3B82F6';
-const RED    = '#EF4444';
+// ── Paleta (misma que ConfiguracionSistema.jsx / Modulocaja.jsx) ──
+const ORANGE   = '#E88B3A';
+const DARK     = '#1F2937';
+const GRAY     = '#6B7280';
+const GRAY_LT  = '#9CA3AF';
+const BG_SOFT  = '#F8FAFC';
+const BORDER   = '#F1F5F9';
+const GREEN    = '#10B981';
+const BLUE     = '#3B82F6';
+const RED      = '#EF4444';
 
 const fmt = (n) => `$${parseFloat(n || 0).toFixed(2)}`;
 const fechaEC = (f) => f ? new Date(f).toLocaleString('es-EC', {
@@ -27,6 +31,9 @@ const codigoVerificacion = (cierre) => {
     return `CC-${hash.toString(16).toUpperCase().padStart(8, '0')}`;
 };
 
+const PAGE_LEFT  = 40;
+const PAGE_RIGHT = 572;
+
 /**
  * Genera el PDF del reporte de cierre de caja a partir del mismo objeto que
  * devuelve cajaModule.obtenerDetalleCierre: { cierre, pagos, reembolsos }.
@@ -34,8 +41,8 @@ const codigoVerificacion = (cierre) => {
  *
  * NOTA: los reembolsos solo se procesan en Efectivo (ver estadoInicialReembolso
  * en Modulocaja.jsx), por lo que este reporte solo incluye una tabla de
- * reembolsos en efectivo. No se agrega una tabla de "reembolsos por
- * transferencia" porque ese caso no puede darse en el sistema.
+ * reembolsos en efectivo. No existe la variante "reembolso por transferencia"
+ * en el sistema.
  */
 function generarPdfCierre({ cierre, pagos, reembolsos }) {
     return new Promise((resolve, reject) => {
@@ -52,13 +59,13 @@ function generarPdfCierre({ cierre, pagos, reembolsos }) {
 
         // ── Encabezado ──
         doc.fontSize(15).fillColor(DARK).font('Helvetica-Bold')
-            .text('LABORATORIO CLÍNICO CARDENAS-GAROFALO');
+            .text('LABORATORIO CLINICO CARDENAS-GAROFALO');
         doc.fontSize(10).fillColor(GRAY).font('Helvetica')
             .text('Reporte de Cierre de Caja');
         doc.moveDown(0.3);
         doc.fontSize(9).fillColor(GRAY)
-            .text(`Cierre N° ${cierre.id_cierre}   ·   Generado: ${fechaEC(new Date())}`);
-        doc.moveTo(40, doc.y + 6).lineTo(572, doc.y + 6).strokeColor('#1D4ED8').lineWidth(2).stroke();
+            .text(`Cierre N. ${cierre.id_cierre}   -   Generado: ${fechaEC(new Date())}`);
+        doc.moveTo(PAGE_LEFT, doc.y + 6).lineTo(PAGE_RIGHT, doc.y + 6).strokeColor(ORANGE).lineWidth(2).stroke();
         doc.moveDown(1);
 
         // ── Datos del turno ──
@@ -73,9 +80,9 @@ function generarPdfCierre({ cierre, pagos, reembolsos }) {
         filaResumen(doc, 'Fondo inicial', fmt(cierre.monto_inicial));
         filaResumen(doc, '(+) Efectivo cobrado', fmt(cierre.total_efectivo_sistema));
         filaResumen(doc, '(+) Transferencia cobrada', fmt(cierre.total_transferencia_sistema));
-        filaResumen(doc, '(−) Reembolsos efectivo', fmt(cierre.total_reembolsos_efectivo));
+        filaResumen(doc, '(-) Reembolsos efectivo', fmt(cierre.total_reembolsos_efectivo));
         filaResumen(doc, 'Efectivo esperado', fmt(cierre.efectivo_esperado), true);
-        filaResumen(doc, 'Efectivo contado (arqueo físico)', fmt(cierre.efectivo_contado), true);
+        filaResumen(doc, 'Efectivo contado (arqueo fisico)', fmt(cierre.efectivo_contado), true);
         filaResumen(
             doc,
             cuadrado ? 'CAJA CUADRADA' : (dif > 0 ? 'Sobrante' : 'Faltante'),
@@ -86,7 +93,7 @@ function generarPdfCierre({ cierre, pagos, reembolsos }) {
 
         if (cierre.observaciones) {
             seccionTitulo(doc, 'Observaciones');
-            doc.fontSize(9).fillColor(DARK).font('Helvetica').text(cierre.observaciones);
+            doc.fontSize(9).fillColor(DARK).font('Helvetica').text(cierre.observaciones, PAGE_LEFT, doc.y, { width: PAGE_RIGHT - PAGE_LEFT });
             doc.moveDown(0.6);
         }
 
@@ -95,28 +102,29 @@ function generarPdfCierre({ cierre, pagos, reembolsos }) {
         const pagosTransferencia = pagos.filter(p => (p.metodo_pago || '').includes('Transferencia'));
 
         seccionTitulo(doc, `Detalle de cobros (${pagos.length})`);
-        tablaCobros(doc, '💵 Efectivo', pagosEfectivo, GREEN);
-        tablaCobros(doc, '🏧 Transferencia', pagosTransferencia, BLUE);
+        tablaCobros(doc, 'Efectivo', pagosEfectivo, GREEN);
+        tablaCobros(doc, 'Transferencia', pagosTransferencia, BLUE);
 
         // ── Detalle de reembolsos ──
         // Solo Efectivo: no existe la variante "reembolso por transferencia"
         // en el sistema (ver nota arriba).
         seccionTitulo(doc, `Detalle de reembolsos (${reembolsos.length})`);
-        tablaReembolsos(doc, '💵 Efectivo', reembolsos, GREEN);
+        tablaReembolsos(doc, 'Efectivo', reembolsos, GREEN);
 
         // ── Firmas ──
-        doc.moveDown(2);
-        const y = doc.y;
+        asegurarEspacio(doc, 70);
+        doc.moveDown(1.5);
+        const yFirma = doc.y;
         doc.fontSize(9).fillColor(DARK);
-        doc.moveTo(40, y).lineTo(240, y).strokeColor('#111').lineWidth(1).stroke();
-        doc.text('Firma de la secretaria/o responsable', 40, y + 4, { width: 200 });
-        doc.moveTo(340, y).lineTo(540, y).strokeColor('#111').lineWidth(1).stroke();
-        doc.text('Firma de supervisor/administrador', 340, y + 4, { width: 200 });
+        doc.moveTo(PAGE_LEFT, yFirma).lineTo(240, yFirma).strokeColor(DARK).lineWidth(1).stroke();
+        doc.text('Firma de la secretaria/o responsable', PAGE_LEFT, yFirma + 4, { width: 200 });
+        doc.moveTo(340, yFirma).lineTo(PAGE_RIGHT, yFirma).strokeColor(DARK).lineWidth(1).stroke();
+        doc.text('Firma de supervisor/administrador', 340, yFirma + 4, { width: 200 });
 
-        doc.moveDown(2);
-        doc.fontSize(8).fillColor(GRAY).text(
-            `Código de verificación del documento: ${codigo} — generado a partir de los montos registrados en el sistema.`,
-            { align: 'center' }
+        doc.moveDown(2.2);
+        doc.fontSize(8).fillColor(GRAY_LT).text(
+            `Codigo de verificacion del documento: ${codigo} - generado a partir de los montos registrados en el sistema.`,
+            PAGE_LEFT, doc.y, { width: PAGE_RIGHT - PAGE_LEFT, align: 'center' }
         );
 
         doc.end();
@@ -125,85 +133,120 @@ function generarPdfCierre({ cierre, pagos, reembolsos }) {
 
 // ── Helpers de layout ──
 
+// Salta de página si no queda suficiente espacio para lo siguiente, para
+// evitar que una tabla o fila quede cortada a la mitad entre dos hojas.
+function asegurarEspacio(doc, alturaNecesaria) {
+    if (doc.y + alturaNecesaria > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+    }
+}
+
 function seccionTitulo(doc, titulo) {
-    doc.fontSize(10).fillColor(DARK).font('Helvetica-Bold').text(titulo.toUpperCase());
-    doc.moveTo(40, doc.y + 2).lineTo(572, doc.y + 2).strokeColor('#D1D5DB').lineWidth(1).stroke();
+    asegurarEspacio(doc, 40);
+    // Barra de fondo suave + texto en mayúsculas, igual estilo que
+    // sectionTitle en ConfiguracionSistema.jsx (fondo #F8FAFC, texto gris).
+    const y = doc.y;
+    doc.rect(PAGE_LEFT, y, PAGE_RIGHT - PAGE_LEFT, 18).fill(BG_SOFT);
+    doc.fillColor(GRAY).fontSize(9).font('Helvetica-Bold')
+        .text(titulo.toUpperCase(), PAGE_LEFT + 6, y + 4.5, { width: PAGE_RIGHT - PAGE_LEFT - 12, characterSpacing: 0.5 });
+    doc.y = y + 18;
     doc.moveDown(0.4);
     doc.font('Helvetica');
 }
 
 function filaResumen(doc, label, valor, bold = false, color = DARK) {
-    doc.fontSize(9.5).fillColor(color).font(bold ? 'Helvetica-Bold' : 'Helvetica');
+    asegurarEspacio(doc, 16);
     const y = doc.y;
-    doc.text(label, 40, y, { continued: false, width: 380 });
-    doc.text(valor, 420, y, { width: 132, align: 'right' });
+    doc.fontSize(9.5).fillColor(color).font(bold ? 'Helvetica-Bold' : 'Helvetica');
+    doc.text(label, PAGE_LEFT, y, { width: 340 });
+    doc.text(valor, 420, y, { width: PAGE_RIGHT - 420, align: 'right' });
+    doc.y = y + 15;
+}
+
+// Dibuja el encabezado de una tabla en una sola fila (misma "y" para todas
+// las columnas), evitando que el texto se pise entre sí.
+function encabezadoTabla(doc, columnas) {
+    asegurarEspacio(doc, 16);
+    const y = doc.y;
+    doc.fontSize(8).fillColor(GRAY).font('Helvetica-Bold');
+    columnas.forEach(({ texto, x, width, align }) => {
+        doc.text(texto, x, y, { width, align: align || 'left' });
+    });
+    doc.y = y + 13;
+    doc.moveTo(PAGE_LEFT, doc.y).lineTo(PAGE_RIGHT, doc.y).strokeColor(BORDER).lineWidth(1).stroke();
+    doc.moveDown(0.3);
+    doc.font('Helvetica');
 }
 
 function tablaCobros(doc, titulo, lista, color) {
     const subtotal = lista.reduce((s, p) => s + parseFloat(p.monto || 0), 0);
+    asegurarEspacio(doc, 30);
     doc.fontSize(9.5).fillColor(color).font('Helvetica-Bold')
-        .text(`${titulo} (${lista.length}) — Subtotal: ${fmt(subtotal)}`);
-    doc.moveDown(0.15);
+        .text(`${titulo} (${lista.length}) - Subtotal: ${fmt(subtotal)}`, PAGE_LEFT, doc.y, { width: PAGE_RIGHT - PAGE_LEFT });
+    doc.moveDown(0.25);
 
-    doc.fontSize(8).fillColor(GRAY).font('Helvetica-Bold');
-    const colX = { ticket: 40, paciente: 110, metodo: 300, monto: 400, hora: 480 };
-    doc.text('Ticket', colX.ticket, doc.y, { continued: false });
-    doc.text('Paciente', colX.paciente, doc.y - doc.currentLineHeight());
-    doc.text('Método', colX.metodo, doc.y - doc.currentLineHeight());
-    doc.text('Monto', colX.monto, doc.y - doc.currentLineHeight());
-    doc.text('Hora', colX.hora, doc.y - doc.currentLineHeight());
-    doc.moveDown(0.2);
+    const colX = { ticket: 40, paciente: 105, metodo: 300, monto: 400, hora: 480 };
+    encabezadoTabla(doc, [
+        { texto: 'Ticket',   x: colX.ticket,   width: 60 },
+        { texto: 'Paciente', x: colX.paciente, width: 190 },
+        { texto: 'Metodo',   x: colX.metodo,   width: 95 },
+        { texto: 'Monto',    x: colX.monto,    width: 75, align: 'right' },
+        { texto: 'Hora',     x: colX.hora,     width: 60 },
+    ]);
 
-    doc.font('Helvetica').fillColor(DARK);
     if (lista.length === 0) {
-        doc.fontSize(8.5).fillColor('#9CA3AF').text('Sin cobros por este método');
+        doc.fontSize(8.5).fillColor(GRAY_LT).text('Sin cobros por este metodo', PAGE_LEFT, doc.y);
+        doc.moveDown(0.3);
     } else {
         lista.forEach(p => {
+            asegurarEspacio(doc, 14);
             const y = doc.y;
             doc.fontSize(8.5).fillColor(DARK);
-            doc.text(String(p.numero_ticket || ''), colX.ticket, y, { width: 65 });
-            doc.text(`${p.paciente_nombres || ''} ${p.paciente_apellidos || ''}`.trim(), colX.paciente, y, { width: 185 });
+            doc.text(String(p.numero_ticket || ''), colX.ticket, y, { width: 60 });
+            doc.text(`${p.paciente_nombres || ''} ${p.paciente_apellidos || ''}`.trim(), colX.paciente, y, { width: 190 });
             doc.text(p.metodo_pago || '', colX.metodo, y, { width: 95 });
-            doc.text(fmt(p.monto), colX.monto, y, { width: 75 });
+            doc.text(fmt(p.monto), colX.monto, y, { width: 75, align: 'right' });
             doc.text(
                 p.fecha_pago ? new Date(p.fecha_pago).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : '',
                 colX.hora, y, { width: 60 }
             );
-            doc.moveDown(0.3);
+            doc.y = y + 14;
         });
     }
-    doc.moveDown(0.4);
+    doc.moveDown(0.5);
 }
 
 function tablaReembolsos(doc, titulo, lista, color) {
     const subtotal = lista.reduce((s, r) => s + parseFloat(r.monto || 0), 0);
+    asegurarEspacio(doc, 30);
     doc.fontSize(9.5).fillColor(color).font('Helvetica-Bold')
-        .text(`${titulo} (${lista.length}) — Subtotal: -${fmt(subtotal).replace('$', '')}`);
-    doc.moveDown(0.15);
+        .text(`${titulo} (${lista.length}) - Subtotal: -${fmt(subtotal).replace('$', '')}`, PAGE_LEFT, doc.y, { width: PAGE_RIGHT - PAGE_LEFT });
+    doc.moveDown(0.25);
 
-    doc.fontSize(8).fillColor(GRAY).font('Helvetica-Bold');
-    const colX = { ticket: 40, motivo: 110, metodo: 380, monto: 470 };
-    doc.text('Ticket', colX.ticket, doc.y, { continued: false });
-    doc.text('Motivo', colX.motivo, doc.y - doc.currentLineHeight());
-    doc.text('Método', colX.metodo, doc.y - doc.currentLineHeight());
-    doc.text('Monto', colX.monto, doc.y - doc.currentLineHeight());
-    doc.moveDown(0.2);
+    const colX = { ticket: 40, motivo: 105, metodo: 380, monto: 470 };
+    encabezadoTabla(doc, [
+        { texto: 'Ticket',  x: colX.ticket, width: 60 },
+        { texto: 'Motivo',  x: colX.motivo, width: 265 },
+        { texto: 'Metodo',  x: colX.metodo, width: 85 },
+        { texto: 'Monto',   x: colX.monto,  width: 62, align: 'right' },
+    ]);
 
-    doc.font('Helvetica').fillColor(DARK);
     if (lista.length === 0) {
-        doc.fontSize(8.5).fillColor('#9CA3AF').text('Sin reembolso en este turno');
+        doc.fontSize(8.5).fillColor(GRAY_LT).text('Sin reembolsos en este turno', PAGE_LEFT, doc.y);
+        doc.moveDown(0.3);
     } else {
         lista.forEach(r => {
+            asegurarEspacio(doc, 14);
             const y = doc.y;
             doc.fontSize(8.5).fillColor(DARK);
-            doc.text(String(r.numero_ticket || ''), colX.ticket, y, { width: 65 });
-            doc.text(r.motivo || '', colX.motivo, y, { width: 260 });
+            doc.text(String(r.numero_ticket || ''), colX.ticket, y, { width: 60 });
+            doc.text(r.motivo || '', colX.motivo, y, { width: 265 });
             doc.text(r.metodo_reembolso || '', colX.metodo, y, { width: 85 });
-            doc.fillColor(RED).text(`-${fmt(r.monto)}`, colX.monto, y, { width: 75 });
-            doc.moveDown(0.3);
+            doc.fillColor(RED).text(`-${fmt(r.monto)}`, colX.monto, y, { width: 62, align: 'right' });
+            doc.y = y + 14;
         });
     }
-    doc.moveDown(0.4);
+    doc.moveDown(0.5);
 }
 
 module.exports = { generarPdfCierre, codigoVerificacion };

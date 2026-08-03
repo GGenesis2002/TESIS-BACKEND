@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('./auditoria');
+const notificacionModule = require('../modules/notificacionModule');
 
 // Zona horaria del laboratorio. Render (y la mayoría de hosts) corren en UTC
 // por defecto, así que sin esto los jobs se ejecutaban a las 7pm/8pm hora
@@ -103,3 +104,29 @@ cron.schedule('0 1 * * *', async () => {
     }
 }, { timezone: TZ });
 console.log(`[CRON] ✅ JOB 2 registrado — corre a la 1:00 AM (${TZ})`);
+
+
+// ── JOB 3: Eliminar notificaciones con más de 1 mes (30 días) ────────────
+// Corre a las 2:00 AM (hora Ecuador), después de los dos jobs anteriores.
+// Esto es un aseo automático: no reemplaza la eliminación manual que ya
+// puede hacer el usuario desde la campana de notificaciones (DELETE /:id),
+// simplemente limpia solo lo que ya lleva más de un mes sin que nadie lo borre.
+cron.schedule('0 2 * * *', async () => {
+    console.log('[CRON] Limpiando notificaciones con más de 1 mes...');
+    try {
+        const eliminadas = await notificacionModule.eliminarAntiguas();
+
+        if (eliminadas.length > 0) {
+            await registrarAuditoria(
+                pool, null, null,
+                'AUTO_ELIMINAR_NOTIFICACIONES',
+                `${eliminadas.length} notificación(es) eliminada(s) automáticamente por antigüedad (+30 días). IDs: ` +
+                `${eliminadas.map(r => r.id_notificacion).join(', ')}`
+            );
+        }
+        console.log(`[CRON] Notificaciones eliminadas: ${eliminadas.length}`);
+    } catch (e) {
+        console.error('[CRON] Error limpiando notificaciones:', e.message);
+    }
+}, { timezone: TZ });
+console.log(`[CRON] ✅ JOB 3 registrado — corre a las 2:00 AM (${TZ})`);

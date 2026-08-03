@@ -80,6 +80,21 @@ const notificacionModule = {
             RETURNING *`;
         const { rows } = await pool.query(query, [id_notificacion, id_usuario]);
         return rows.length > 0;
+    },
+
+    /**
+     * Eliminar automáticamente las notificaciones con más de 30 días (1 mes).
+     * Se usa desde el cron de scheduledTasks.js. La eliminación MANUAL (botón
+     * del usuario, vía notificacionController.eliminarNotificacion) sigue
+     * funcionando igual y de forma independiente a esta limpieza automática.
+     */
+    eliminarAntiguas: async () => {
+        const query = `
+            DELETE FROM notificacion
+            WHERE fecha < NOW() - INTERVAL '30 days'
+            RETURNING id_notificacion`;
+        const { rows } = await pool.query(query);
+        return rows;
     }
 };
 

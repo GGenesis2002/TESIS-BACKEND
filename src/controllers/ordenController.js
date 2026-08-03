@@ -444,7 +444,11 @@ const ordenController = {
                     `;
                 const params = [id_paciente];
                 if (estado) { q += ' AND o.estado = $2'; params.push(estado); }
-                q += ' ORDER BY o.fecha_orden DESC';
+                // Para la cola de 'Pagada' (toma de muestras) el orden debe ser por
+                // LLEGADA: el que pagó/llegó primero se atiende primero (FIFO), no el
+                // último en pagar. Para el resto de estados/dashboard se mantiene el
+                // orden por actividad más reciente primero.
+                q += estado === 'Pagada' ? ' ORDER BY o.fecha_orden ASC' : ' ORDER BY o.fecha_orden DESC';
 
                 const { rows } = await pool.query(q, params);
                 return res.json(rows);
@@ -469,7 +473,9 @@ const ordenController = {
                 qGeneral += ' WHERE o.estado = $1'; 
                 paramsGen.push(estado); 
             }
-            qGeneral += ' ORDER BY o.fecha_orden DESC';
+            // Misma lógica que arriba: la cola de 'Pagada' (toma de muestras) debe
+            // salir por orden de llegada (FIFO), no por la más reciente primero.
+            qGeneral += estado === 'Pagada' ? ' ORDER BY o.fecha_orden ASC' : ' ORDER BY o.fecha_orden DESC';
 
             const resultGen = await pool.query(qGeneral, paramsGen);
             res.json(resultGen.rows);

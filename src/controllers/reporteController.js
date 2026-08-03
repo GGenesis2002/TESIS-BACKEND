@@ -91,7 +91,7 @@ const reporteController = {
                    .font('Helvetica').text(`${data.numero_ticket}`, 400, 130)
                    .font('Helvetica-Bold').text('EDAD:', 350, 145)
                    .font('Helvetica').text(`${data.edad} AÑOS`, 400, 145)
-                   .font('Helvetica-Bold').text('FECHA:', 350, 155)
+                   .font('Helvetica-Bold').text('FECHA DE GENERACIPON:', 350, 155)
                    .font('Helvetica').text(`${new Date(data.fecha_orden).toLocaleDateString()}`, 400, 155);
 
                 let y = 190;

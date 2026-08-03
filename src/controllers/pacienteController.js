@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const Paciente = require('../modules/pacienteModule');
 const bcrypt = require('bcryptjs');
 const { registrarAuditoria } = require('../helpers/auditoria');
+const { enviarCorreo } = require('../services/emailService'); // ← NUEVO: para enviar credenciales al paciente
 
 const pacienteController = {
 
@@ -153,6 +154,37 @@ const pacienteController = {
             );
 
             await client.query('COMMIT');
+
+            // ── ENVIAR CREDENCIALES POR CORREO ──────────────────────────────────
+            // Solo cuando se creó un usuario NUEVO (cédula nueva), porque ahí es
+            // cuando existen un username/password recién generados que el paciente
+            // todavía no conoce. Si la cédula ya existía (se le sumó el rol Paciente
+            // a un usuario de personal), ese usuario ya tenía sus propias credenciales
+            // desde antes y no hay nada nuevo que avisarle.
+            // Esto va DESPUÉS del commit y en su propio try/catch a propósito: si el
+            // correo falla (Brevo caído, etc.) no queremos revertir el registro del
+            // paciente, que ya quedó guardado correctamente en la base de datos.
+            if (existente.length === 0) {
+                try {
+                    await enviarCorreo(
+                        correo,
+                        'Tus credenciales de acceso - Laboratorio Clínico Garófalo',
+                        `
+                            <p>Hola ${nombres},</p>
+                            <p>Tu cuenta ha sido creada exitosamente. Estas son tus credenciales de acceso a la app:</p>
+                            <p><strong>Usuario:</strong> ${username}<br>
+                               <strong>Contraseña:</strong> ${password}</p>
+                            <p>Por seguridad, te recomendamos cambiar tu contraseña luego de iniciar sesión por primera vez.</p>
+                        `
+                    );
+                } catch (mailErr) {
+                    console.error('❌ No se pudo enviar el correo de credenciales:', mailErr.message);
+                    // No hacemos res.status(500) aquí: el paciente ya fue registrado
+                    // correctamente, el fallo del correo no debe verse como un error
+                    // de registro para el usuario que hizo la petición.
+                }
+            }
+
             res.status(201).json({
                 msg: existente.length > 0
                     ? 'El usuario ya existía (cédula registrada previamente); se le asignó el rol de Paciente'

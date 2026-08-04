@@ -646,10 +646,11 @@ detalleOrdenPaciente: async (req, res) => {
         if (check.rowCount === 0)
             return res.status(403).json({ error: 'No autorizado.' });
 
-        // Traer todos los resultados validados de esa orden con sus parámetros
-        // Se filtra parametro_examen por sexo/edad del paciente para no traer
-        // variantes de referencia que no le corresponden (evita duplicados
-        // visuales cuando un parámetro tiene rangos distintos por sexo/edad).
+        // Traer todos los resultados validados de esa orden con sus parámetros.
+        // Se usa un LATERAL + DISTINCT ON para quedarnos con UNA sola fila por
+        // nombre de parámetro cuando el catálogo tiene filas duplicadas,
+        // priorizando SIEMPRE la que ya tiene un resultado cargado (para no
+        // perder el valor si el duplicado "ganador" por sexo/edad estaba vacío).
 const { rows } = await pool.query(`
     SELECT
         r.id_resultado,
@@ -657,43 +658,53 @@ const { rows } = await pool.query(`
         e.nombre_examen,
         e.tipo_resultado,
         ce.nombre_categoria,
-        pe.id_parametro,
-        pe.nombre_parametro,
-        pe.unidad,
-        pe.rango_min,
-        pe.rango_max,
-        pe.valor_referencia,
-        dr.valor_obtenido  AS resultado,
-        dr.observacion
+        x.id_parametro,
+        x.nombre_parametro,
+        x.unidad,
+        x.rango_min,
+        x.rango_max,
+        x.valor_referencia,
+        x.resultado,
+        x.observacion
     FROM resultado r
     JOIN detalle_orden do2        ON do2.id_orden       = r.id_orden
     JOIN examen e                 ON e.id_examen        = do2.id_examen
     JOIN orden_medica om          ON om.id_orden        = r.id_orden
     JOIN paciente p                ON p.id_paciente      = om.id_paciente
     LEFT JOIN categoria_examen ce ON ce.id_categoria    = e.id_categoria
-    LEFT JOIN parametro_examen pe ON pe.id_examen = e.id_examen
-                                  AND pe.estado = TRUE
-                                  AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max)
-                                  AND pe.sexo_referencia = (
-                                      SELECT pe2.sexo_referencia
-                                      FROM parametro_examen pe2
-                                      WHERE pe2.id_examen = pe.id_examen
-                                        AND pe2.nombre_parametro = pe.nombre_parametro
-                                        AND pe2.estado = TRUE
-                                        AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe2.edad_min AND pe2.edad_max)
-                                      ORDER BY
-                                          CASE pe2.sexo_referencia
-                                              WHEN p.genero  THEN 1
-                                              WHEN 'General' THEN 2
-                                              ELSE                3
-                                          END
-                                      LIMIT 1
-                                  )
-    LEFT JOIN detalle_resultado dr ON dr.id_resultado = r.id_resultado
-                                  AND dr.id_parametro = pe.id_parametro
+    LEFT JOIN LATERAL (
+        SELECT DISTINCT ON (pe.nombre_parametro)
+            pe.id_parametro,
+            pe.nombre_parametro,
+            pe.unidad,
+            pe.rango_min,
+            pe.rango_max,
+            pe.valor_referencia,
+            dr.valor_obtenido AS resultado,
+            dr.observacion
+        FROM parametro_examen pe
+        LEFT JOIN detalle_resultado dr
+            ON dr.id_resultado = r.id_resultado
+           AND dr.id_parametro = pe.id_parametro
+        WHERE pe.id_examen = e.id_examen
+          AND pe.estado = TRUE
+          AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max)
+        ORDER BY
+            pe.nombre_parametro,
+            -- 1) priorizar la fila que SÍ tiene resultado cargado
+            (dr.valor_obtenido IS NOT NULL AND dr.valor_obtenido != '') DESC,
+            -- 2) entre las que tienen (o no tienen) resultado, priorizar la más
+            --    específica para el sexo del paciente, luego 'General'
+            CASE pe.sexo_referencia
+                WHEN (CASE p.genero WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino' ELSE 'General' END) THEN 1
+                WHEN 'General' THEN 2
+                ELSE 3
+            END,
+            pe.id_parametro
+    ) x ON TRUE
     WHERE r.id_orden = $1
       AND (r.estado = 'Validado' OR r.archivo_pdf IS NOT NULL)
-    ORDER BY ce.nombre_categoria, e.nombre_examen, pe.id_parametro
+    ORDER BY ce.nombre_categoria, e.nombre_examen, x.id_parametro
 `, [id_orden]);
 
         res.json({ data: rows });

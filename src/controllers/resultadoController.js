@@ -421,10 +421,13 @@ const resultadoController = {
                         FROM detalle_orden do2
                         JOIN examen e ON e.id_examen = do2.id_examen
                         JOIN categoria_examen ce ON ce.id_categoria = e.id_categoria
-                        JOIN especialista_examen ee ON ee.id_examen        = e.id_examen
-                                                   AND ee.id_especialista  = r.id_especialista
-                                                   AND ee.estado           = TRUE
                         WHERE do2.id_orden = r.id_orden
+                          AND EXISTS (
+                              SELECT 1 FROM especialista_examen ee
+                              WHERE ee.id_examen        = e.id_examen
+                                AND ee.id_especialista  = r.id_especialista
+                                AND ee.estado           = TRUE
+                          )
                     ) AS examenes
                 FROM resultado r
                 JOIN especialista esp ON esp.id_especialista = r.id_especialista
@@ -644,7 +647,9 @@ detalleOrdenPaciente: async (req, res) => {
             return res.status(403).json({ error: 'No autorizado.' });
 
         // Traer todos los resultados validados de esa orden con sus parámetros
-        // ✅ DESPUÉS — agrega JOIN a categoria_examen y trae nombre_categoria
+        // Se filtra parametro_examen por sexo/edad del paciente para no traer
+        // variantes de referencia que no le corresponden (evita duplicados
+        // visuales cuando un parámetro tiene rangos distintos por sexo/edad).
 const { rows } = await pool.query(`
     SELECT
         r.id_resultado,
@@ -652,6 +657,7 @@ const { rows } = await pool.query(`
         e.nombre_examen,
         e.tipo_resultado,
         ce.nombre_categoria,
+        pe.id_parametro,
         pe.nombre_parametro,
         pe.unidad,
         pe.rango_min,
@@ -660,12 +666,29 @@ const { rows } = await pool.query(`
         dr.valor_obtenido  AS resultado,
         dr.observacion
     FROM resultado r
-    JOIN detalle_orden do2      ON do2.id_orden       = r.id_orden
-    JOIN examen e               ON e.id_examen        = do2.id_examen
-    LEFT JOIN categoria_examen ce ON ce.id_categoria  = e.id_categoria
-    LEFT JOIN especialista_examen ee ON ee.id_especialista = r.id_especialista
-                                   AND ee.id_examen        = e.id_examen
-    LEFT JOIN parametro_examen pe ON pe.id_examen = e.id_examen AND pe.estado = TRUE
+    JOIN detalle_orden do2        ON do2.id_orden       = r.id_orden
+    JOIN examen e                 ON e.id_examen        = do2.id_examen
+    JOIN orden_medica om          ON om.id_orden        = r.id_orden
+    JOIN paciente p                ON p.id_paciente      = om.id_paciente
+    LEFT JOIN categoria_examen ce ON ce.id_categoria    = e.id_categoria
+    LEFT JOIN parametro_examen pe ON pe.id_examen = e.id_examen
+                                  AND pe.estado = TRUE
+                                  AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max)
+                                  AND pe.sexo_referencia = (
+                                      SELECT pe2.sexo_referencia
+                                      FROM parametro_examen pe2
+                                      WHERE pe2.id_examen = pe.id_examen
+                                        AND pe2.nombre_parametro = pe.nombre_parametro
+                                        AND pe2.estado = TRUE
+                                        AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe2.edad_min AND pe2.edad_max)
+                                      ORDER BY
+                                          CASE pe2.sexo_referencia
+                                              WHEN p.genero  THEN 1
+                                              WHEN 'General' THEN 2
+                                              ELSE                3
+                                          END
+                                      LIMIT 1
+                                  )
     LEFT JOIN detalle_resultado dr ON dr.id_resultado = r.id_resultado
                                   AND dr.id_parametro = pe.id_parametro
     WHERE r.id_orden = $1

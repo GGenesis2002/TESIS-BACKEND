@@ -688,13 +688,14 @@ const { rows } = await pool.query(`
            AND dr.id_parametro = pe.id_parametro
         WHERE pe.id_examen = e.id_examen
           AND pe.estado = TRUE
-          AND (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max)
         ORDER BY
             pe.nombre_parametro,
-            -- 1) priorizar la fila que SÍ tiene resultado cargado
+            -- 1) priorizar SIEMPRE la fila que ya tiene resultado cargado
+            --    (nunca se descarta por edad/sexo, solo se usa como desempate)
             (dr.valor_obtenido IS NOT NULL AND dr.valor_obtenido != '') DESC,
-            -- 2) entre las que tienen (o no tienen) resultado, priorizar la más
-            --    específica para el sexo del paciente, luego 'General'
+            -- 2) entre empates, la que coincide con la edad del paciente
+            (EXTRACT(YEAR FROM AGE(p.fecha_nacimiento)) BETWEEN pe.edad_min AND pe.edad_max) DESC,
+            -- 3) luego la más específica para el sexo del paciente, luego 'General'
             CASE pe.sexo_referencia
                 WHEN (CASE p.genero WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino' ELSE 'General' END) THEN 1
                 WHEN 'General' THEN 2

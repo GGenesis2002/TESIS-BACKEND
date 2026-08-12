@@ -40,10 +40,11 @@ const verifyToken = async (req, res, next) => {
         const idUsuarioRolActivo = req.headers['x-id-usuario-rol'];
         if (idUsuarioRolActivo) {
             // ✅ Validar que ese id_usuario_rol REALMENTE pertenece al usuario del token
+            // 🔧 FIX: el payload del token usa "id_usuario", no "id" (ver bloque de arriba)
             const { rows } = await pool.query(
                 `SELECT id_usuario_rol FROM usuario_rol
                  WHERE id_usuario_rol = $1 AND id_usuario = $2 AND activo = TRUE`,
-                [parseInt(idUsuarioRolActivo), verified.id]
+                [parseInt(idUsuarioRolActivo), verified.id_usuario]
             );
             if (rows.length === 0) {
                 return res.status(403).json({ msg: "El rol activo indicado no pertenece a este usuario." });
@@ -106,7 +107,10 @@ const esPropietarioOTieneRol = (campo, rolesPermitidos) => {
             return res.status(401).json({ msg: "No autorizado" });
         }
 
-        const rolesUsuario = Array.isArray(req.user.roles) ? req.user.roles : [req.user.roles];
+        // 🔧 Mismo fallback defensivo que en checkRole, por si roles viene undefined/string
+        const rolesUsuario = Array.isArray(req.user.roles)
+            ? req.user.roles
+            : (req.user.roles ? [req.user.roles] : []);
         const idUsuarioToken = req.user.id_usuario;
 
         const valorCampo = req.params[campo] || req.body[campo] || req.query[campo];

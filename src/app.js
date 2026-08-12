@@ -2,6 +2,10 @@ require('dotenv').config();
 require('./jobs/Notificacioncronjob');
 require('./helpers/scheduledTasks'); // ← activa los cron jobs al iniciar el servidor
 const express = require('express');
+
+app.set('trust proxy', 1);
+
+
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');

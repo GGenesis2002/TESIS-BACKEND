@@ -8,7 +8,7 @@ const ROLES = require('../config/roles');
 const ADMIN_ONLY = [ROLES.ADMIN, ROLES.TECNICO];
 
 router.post('/', verifyToken, checkRole(ADMIN_ONLY), asigCtrl.asignar);
-router.get('/', verifyToken, checkRole(ADMIN_ONLY), asigCtrl.listar);
+router.get('/', verifyToken, checkRole(ADMIN_ONLY, ROLES.ESPECIALISTA, ROLES.ASISTENTE), asigCtrl.listar);
 router.post('/remover', verifyToken, checkRole(ADMIN_ONLY), asigCtrl.desasignarExamen);
 router.delete('/:id', verifyToken, checkRole(ADMIN_ONLY), asigCtrl.quitarAsignacion);
 
